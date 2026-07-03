@@ -1,0 +1,10 @@
+-r requirements.txt
+
+# Full development environment: tests, docs, packaging, and local bookstore API helpers.
+pytest>=8,<10
+pytest-cov>=7,<8
+coverage>=7,<8
+pdoc>=16,<17
+pyinstaller>=6,<7
+httpx>=0.23,<1
+ruff>=0.8,<1

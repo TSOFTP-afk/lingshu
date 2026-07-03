@@ -1,0 +1,76 @@
+{
+  "name": "lingjing-admin",
+  "version": "1.0.0",
+  "description": "灵镜管理台 — 灵枢云端后台管理 (Electron)",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "set NODE_ENV=development && concurrently \"vite\" \"wait-on http://127.0.0.1:5176 && electron .\"",
+    "dev:vite": "vite",
+    "dev:electron": "set NODE_ENV=development && electron .",
+    "build:renderer": "vite build",
+    "build": "vite build && electron-builder",
+    "build:dir": "vite build && electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.lingshu.admin",
+    "productName": "灵镜管理台",
+    "artifactName": "LingJing-Admin-${version}.${ext}",
+    "directories": {
+      "output": "../release-lingjing"
+    },
+    "files": [
+      "electron/main.js",
+      "electron/preload.js",
+      "dist/**/*",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../packaging/app_icon.ico",
+        "to": "packaging/app_icon.ico"
+      }
+    ],
+    "win": {
+      "icon": "../packaging/app_icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "signAndEditExecutable": true,
+      "verifyUpdateCodeSignature": true,
+      "certificateFile": "env:WIN_CSC_LINK",
+      "certificatePassword": "env:WIN_CSC_KEY_PASSWORD"
+    },
+    "mac": {
+      "hardenedRuntime": true,
+      "identity": "env:MAC_CSC_NAME"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://update.ling-shu.top"
+    },
+    "portable": {
+      "artifactName": "LingJing-Admin-${version}.${ext}"
+    }
+  },
+  "dependencies": {
+    "vue": "^3.4.0",
+    "element-plus": "^2.7.0",
+    "@element-plus/icons-vue": "^2.3.0",
+    "axios": "^1.7.0",
+    "echarts": "^5.5.0",
+    "vue-echarts": "^7.0.0"
+  },
+  "devDependencies": {
+    "electron": "^30.5.1",
+    "electron-builder": "^24.0.0",
+    "concurrently": "^8.0.0",
+    "wait-on": "^7.0.0",
+    "vite": "^5.0.0",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "typescript": "^5.0.0",
+    "vue-tsc": "^2.0.0"
+  }
+}

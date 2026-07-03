@@ -1,0 +1,1013 @@
+<template>
+  <div class="content-editor-wrapper">
+    <div class="editor-toolbar">
+      <div class="toolbar-left">
+        <span
+          class="editor-title"
+          :title="title"
+        >{{ title || '未命名章节' }}</span>
+        <el-tag
+          v-if="dirty"
+          type="warning"
+          size="small"
+          effect="plain"
+        >
+          未保存
+        </el-tag>
+        <el-tag
+          v-else
+          type="success"
+          size="small"
+          effect="plain"
+        >
+          已保存
+        </el-tag>
+      </div>
+      <div class="toolbar-right">
+        <span class="word-count">正文 {{ wordCount }} 字</span>
+        <span class="word-count">大纲 {{ outlineWordCount }} 字</span>
+        <span
+          class="ai-probability"
+          :class="aiProbabilityClass"
+        >{{ aiProbabilityText }}</span>
+      </div>
+    </div>
+
+    <div
+      v-if="showActionbar"
+      class="chapter-actionbar"
+    >
+      <el-tooltip
+        content="润色当前章节"
+        placement="bottom"
+      >
+        <el-button
+          class="action-button"
+          :disabled="!hasContent || !auth.isLoggedIn"
+          @click="onPolish"
+        >
+          <el-icon><MagicStick /></el-icon>
+          <span>润色</span>
+        </el-button>
+      </el-tooltip>
+      <el-tooltip
+        content="检测当前章节 AI 生成概率"
+        placement="bottom"
+      >
+        <el-button
+          class="action-button"
+          :disabled="!hasContent || !auth.isLoggedIn"
+          @click="$emit('detect-ai')"
+        >
+          <el-icon><DataAnalysis /></el-icon>
+          <span>AI率检测</span>
+        </el-button>
+      </el-tooltip>
+      <el-tooltip
+        content="保存当前章节"
+        placement="bottom"
+      >
+        <el-button
+          class="action-button primary-action"
+          type="primary"
+          :disabled="!dirty"
+          @click="$emit('save')"
+        >
+          <el-icon><DocumentChecked /></el-icon>
+          <span>保存</span>
+        </el-button>
+      </el-tooltip>
+      <el-tooltip
+        content="删除所有未保存变动，恢复到最后一次保存"
+        placement="bottom"
+      >
+        <el-button
+          class="action-button"
+          :disabled="!dirty"
+          @click="$emit('revert')"
+        >
+          <el-icon><RefreshLeft /></el-icon>
+          <span>回退</span>
+        </el-button>
+      </el-tooltip>
+      <el-tooltip
+        content="复制整章正文"
+        placement="bottom"
+      >
+        <el-button
+          class="action-button"
+          :disabled="!hasContent"
+          @click="copyChapter"
+        >
+          <el-icon><CopyDocument /></el-icon>
+          <span>全章复制</span>
+        </el-button>
+      </el-tooltip>
+      <el-tooltip
+        content="打开 AI 纠错"
+        placement="bottom"
+      >
+        <el-button
+          class="action-button"
+          :disabled="!hasContent || !auth.isLoggedIn"
+          @click="openCorrection"
+        >
+          <el-icon><EditPen /></el-icon>
+          <span>纠错</span>
+        </el-button>
+      </el-tooltip>
+      <el-tooltip
+        content="搜索当前作品"
+        placement="bottom"
+      >
+        <el-button
+          class="action-button"
+          @click="openSearch"
+        >
+          <el-icon><Search /></el-icon>
+          <span>搜索</span>
+        </el-button>
+      </el-tooltip>
+    </div>
+
+    <div class="editor-body">
+      <div
+        class="native-text-editor"
+        @click="focus"
+      >
+        <div
+          class="line-marker-layer"
+          aria-hidden="true"
+        >
+          <div
+            class="line-marker-spacer"
+            :style="{ height: `${virtualScrollTop}px` }"
+          />
+          <div
+            v-for="line in visibleLines"
+            :key="line.index"
+            class="line-marker-row"
+            :class="{ 'line-marker-row--blank': !line.text.trim() }"
+          >
+            <span class="line-marker">{{ line.text.trim() ? line.number : '' }}</span>
+            <span class="line-marker-text">{{ line.text || ' ' }}</span>
+          </div>
+          <div
+            class="line-marker-spacer"
+            :style="{ height: `${virtualScrollBottom}px` }"
+          />
+        </div>
+
+        <textarea
+          ref="textareaRef"
+          v-model="localContent"
+          class="content-textarea"
+          spellcheck="false"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          wrap="soft"
+          @keydown="onEditorKeydown"
+          @scroll="syncMarkerScroll"
+        />
+      </div>
+    </div>
+
+    <el-dialog
+      v-model="polishDialogVisible"
+      title="选区润色"
+      width="880px"
+      class="polish-dialog"
+      append-to-body
+      destroy-on-close
+    >
+      <div class="polish-dialog-body">
+        <section class="polish-column">
+          <div class="polish-column-title">
+            润色前
+          </div>
+          <div class="polish-text polish-text--before">
+            <span
+              v-for="(part, index) in polishDiff.before"
+              :key="`before-${index}`"
+              :class="{ 'diff-changed': part.changed }"
+            >{{ part.text }}</span>
+          </div>
+        </section>
+
+        <section class="polish-column">
+          <div class="polish-column-title">
+            <span>润色后</span>
+            <el-tag
+              v-if="polishLoading"
+              size="small"
+              type="info"
+            >
+              生成中
+            </el-tag>
+          </div>
+          <div
+            v-loading="polishLoading"
+            class="polish-text polish-text--after"
+          >
+            <template v-if="polishResult">
+              <span
+                v-for="(part, index) in polishDiff.after"
+                :key="`after-${index}`"
+                :class="{ 'diff-changed': part.changed }"
+              >{{ part.text }}</span>
+            </template>
+            <span
+              v-else
+              class="polish-placeholder"
+            >等待润色结果...</span>
+          </div>
+        </section>
+      </div>
+
+      <template #footer>
+        <el-button @click="polishDialogVisible = false">
+          取消
+        </el-button>
+        <el-button
+          :loading="polishLoading"
+          @click="requestPolishSelection"
+        >
+          重新润色
+        </el-button>
+        <el-button
+          type="primary"
+          :disabled="polishLoading || !polishResult"
+          @click="applyPolishResult"
+        >
+          应用到正文
+        </el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { ElMessage } from 'element-plus';
+import {
+  CopyDocument,
+  DataAnalysis,
+  DocumentChecked,
+  EditPen,
+  MagicStick,
+  RefreshLeft,
+  Search,
+} from '@element-plus/icons-vue';
+import { useEventBus } from '../../composables/useEventBus';
+import api from '../../utils/api';
+import { useAuthStore } from '../../stores/auth';
+import { useBookStore } from '../../stores/book';
+
+const auth = useAuthStore();
+const bookStore = useBookStore();
+const { on, off, emit: busEmit } = useEventBus();
+
+const props = defineProps({
+  chapterId: { type: [Number, String, null], default: null },
+  content: { type: String, default: '' },
+  title: { type: String, default: '' },
+  dirty: { type: Boolean, default: false },
+  showActionbar: { type: Boolean, default: true },
+  aiProbability: { type: Number, default: 0 },
+  aiProbabilityLevel: { type: String, default: 'none' },
+});
+
+const emit = defineEmits(['update:content', 'change', 'save', 'revert', 'detect-ai']);
+
+const localContent = ref(props.content);
+const applyingExternalContent = ref(false);
+const textareaRef = ref(null);
+const polishDialogVisible = ref(false);
+const polishLoading = ref(false);
+const polishOriginal = ref('');
+const polishResult = ref('');
+const polishRange = ref({ start: 0, end: 0 });
+
+// 写作探针伴随：8 秒防抖触发后台扫描
+const PROBE_DEFAULT_INTERVAL_MS = 8000;
+const probeTimer = ref(null);
+const probeIntervalMs = ref(PROBE_DEFAULT_INTERVAL_MS);
+const probeConfigLoaded = ref(false);
+
+// 虚拟滚动状态
+const VIRTUAL_LINE_HEIGHT = 24; // 与 --content-line-height 默认值一致
+const VIRTUAL_PADDING_Y = 12; // 与 --content-editor-padding-y 默认值一致
+const VIRTUAL_BUFFER = 10; // 上下缓冲行数
+const virtualScrollTop = ref(0);
+const virtualScrollBottom = ref(0);
+const visibleStartLine = ref(0);
+const visibleEndLine = ref(0);
+
+watch(() => props.content, (val) => {
+  if (val !== localContent.value) {
+    applyingExternalContent.value = true;
+    localContent.value = val;
+    nextTick(() => {
+      applyingExternalContent.value = false;
+      syncMarkerScroll();
+    });
+  }
+});
+
+watch(localContent, (val) => {
+  if (applyingExternalContent.value) return;
+  emit('update:content', val);
+  emit('change', val);
+  nextTick(syncMarkerScroll);
+  scheduleProbeScan();
+});
+
+// 章节切换时清空探针定时器，避免旧章节的扫描覆盖新章节
+watch(() => props.chapterId, () => {
+  clearProbeTimer();
+});
+
+function clearProbeTimer() {
+  if (probeTimer.value) {
+    clearTimeout(probeTimer.value);
+    probeTimer.value = null;
+  }
+}
+
+function scheduleProbeScan() {
+  if (!props.chapterId || !bookStore.currentBookId) return;
+  if (probeIntervalMs.value <= 0) return; // 探针未启用
+  clearProbeTimer();
+  probeTimer.value = setTimeout(() => {
+    probeTimer.value = null;
+    triggerProbeScan();
+  }, probeIntervalMs.value);
+}
+
+async function triggerProbeScan() {
+  const bookId = bookStore.currentBookId;
+  const chapterId = props.chapterId;
+  if (!bookId || !chapterId) return;
+  try {
+    const { data } = await api.post(
+      `/workspace/books/${bookId}/chapters/${chapterId}/writing-probe`,
+    );
+    // 仅当本次扫描产生新草稿时通知 ProbeTab 刷新
+    const newChars = data?.character_drafts?.length || 0;
+    const newSummary = !!data?.summary_draft;
+    if (newChars > 0 || newSummary) {
+      busEmit('lingshu:probe-scan-completed', { book_id: bookId, chapter_id: chapterId });
+    }
+  } catch (e) {
+    // 静默失败：探针未启用（403）、未登录（401）等不打扰用户写作
+  }
+}
+
+async function loadProbeConfig() {
+  if (probeConfigLoaded.value) return;
+  probeConfigLoaded.value = true;
+  try {
+    const { data } = await api.get('/settings/ai');
+    const probe = data?.profiles?.writing_probe;
+    if (probe) {
+      if (probe.interval_seconds && probe.interval_seconds >= 5) {
+        probeIntervalMs.value = probe.interval_seconds * 1000;
+      }
+      // 探针未启用时禁用自动扫描
+      if (probe.probe_enabled === false) {
+        probeIntervalMs.value = 0;
+      }
+    }
+  } catch (e) {
+    // 配置加载失败时使用默认 8 秒间隔
+  }
+}
+
+const editorLines = computed(() => (localContent.value || '').split('\n'));
+const totalLineCount = computed(() => editorLines.value.length);
+
+const visibleLines = computed(() => {
+  const lines = editorLines.value;
+  const start = Math.max(0, visibleStartLine.value);
+  const end = Math.min(lines.length, visibleEndLine.value);
+  const result = [];
+  for (let i = start; i < end; i += 1) {
+    result.push({ index: i, number: i + 1, text: lines[i] });
+  }
+  return result;
+});
+
+const wordCount = computed(() => {
+  const text = localContent.value || '';
+  return text.replace(/\s/g, '').length;
+});
+
+const outlineWordCount = computed(() => 0);
+const hasContent = computed(() => Boolean((localContent.value || '').trim()));
+const polishDiff = computed(() => buildInlineDiff(polishOriginal.value, polishResult.value));
+const hasAiProbability = computed(() => props.aiProbabilityLevel !== 'none' || Number(props.aiProbability) > 0);
+const aiProbabilityText = computed(() => {
+  if (!hasAiProbability.value) return '未进行AI检测';
+  return `AI检测 ${normalizedAiProbability.value}%`;
+});
+const normalizedAiProbability = computed(() => Math.max(0, Math.min(100, Number(props.aiProbability) || 0)));
+const aiProbabilityClass = computed(() => {
+  if (!hasAiProbability.value) return 'ai-probability--unknown';
+  if (normalizedAiProbability.value > 80) return 'ai-probability--danger';
+  if (normalizedAiProbability.value >= 30) return 'ai-probability--warning';
+  return 'ai-probability--success';
+});
+
+function onEditorKeydown(event) {
+  const key = event.key.toLowerCase();
+  if ((event.ctrlKey || event.metaKey) && key === 's') {
+    event.preventDefault();
+    emit('save');
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && key === 'f') {
+    event.preventDefault();
+    openSearch();
+  }
+}
+
+async function onPolish() {
+  if (!auth.requireAiAccess()) return;
+  if (!props.chapterId) {
+    ElMessage.warning('请先打开一个章节');
+    return;
+  }
+  const selection = getSelectedRange();
+  if (!selection || !selection.text.trim()) {
+    ElMessage.warning('请先选中需要润色的正文');
+    return;
+  }
+  polishOriginal.value = selection.text;
+  polishResult.value = '';
+  polishRange.value = { start: selection.start, end: selection.end };
+  polishDialogVisible.value = true;
+  await requestPolishSelection();
+}
+
+async function requestPolishSelection() {
+  if (!props.chapterId || !polishOriginal.value.trim()) return;
+  polishLoading.value = true;
+  polishResult.value = '';
+  try {
+    const { data } = await api.post(`/workspace/chapters/${props.chapterId}/polish-selection`, {
+      text: polishOriginal.value,
+    });
+    polishResult.value = String(data.polished || '').trim();
+    if (!polishResult.value) {
+      ElMessage.warning('润色结果为空');
+    }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || e.message || '润色失败');
+  } finally {
+    polishLoading.value = false;
+  }
+}
+
+function applyPolishResult() {
+  if (!polishResult.value) return;
+  const { start, end } = polishRange.value;
+  const currentSelection = localContent.value.slice(start, end);
+  if (currentSelection !== polishOriginal.value) {
+    ElMessage.warning('正文已发生变化，请重新选中文本后润色');
+    polishDialogVisible.value = false;
+    return;
+  }
+  localContent.value = `${localContent.value.slice(0, start)}${polishResult.value}${localContent.value.slice(end)}`;
+  polishDialogVisible.value = false;
+  nextTick(() => selectRange(start, start + polishResult.value.length));
+  ElMessage.success('已应用润色结果');
+}
+
+function getSelectedRange() {
+  const textarea = textareaRef.value;
+  if (!textarea) return null;
+  const start = Math.min(textarea.selectionStart, textarea.selectionEnd);
+  const end = Math.max(textarea.selectionStart, textarea.selectionEnd);
+  if (end <= start) return null;
+  return {
+    start,
+    end,
+    text: localContent.value.slice(start, end),
+  };
+}
+
+function buildInlineDiff(before, after) {
+  if (!after) {
+    return {
+      before: [{ text: before || '', changed: false }],
+      after: [],
+    };
+  }
+  if (before === after) {
+    return {
+      before: [{ text: before, changed: false }],
+      after: [{ text: after, changed: false }],
+    };
+  }
+
+  const beforeChars = Array.from(before || '');
+  const afterChars = Array.from(after || '');
+  let start = 0;
+  while (
+    start < beforeChars.length &&
+    start < afterChars.length &&
+    beforeChars[start] === afterChars[start]
+  ) {
+    start += 1;
+  }
+
+  let beforeEnd = beforeChars.length - 1;
+  let afterEnd = afterChars.length - 1;
+  while (
+    beforeEnd >= start &&
+    afterEnd >= start &&
+    beforeChars[beforeEnd] === afterChars[afterEnd]
+  ) {
+    beforeEnd -= 1;
+    afterEnd -= 1;
+  }
+
+  return {
+    before: compactDiffParts([
+      { text: beforeChars.slice(0, start).join(''), changed: false },
+      { text: beforeChars.slice(start, beforeEnd + 1).join(''), changed: true },
+      { text: beforeChars.slice(beforeEnd + 1).join(''), changed: false },
+    ]),
+    after: compactDiffParts([
+      { text: afterChars.slice(0, start).join(''), changed: false },
+      { text: afterChars.slice(start, afterEnd + 1).join(''), changed: true },
+      { text: afterChars.slice(afterEnd + 1).join(''), changed: false },
+    ]),
+  };
+}
+
+function compactDiffParts(parts) {
+  return parts.filter((part) => part.text);
+}
+
+async function copyChapter() {
+  try {
+    await navigator.clipboard.writeText(localContent.value || '');
+    ElMessage.success('整章正文已复制');
+  } catch {
+    ElMessage.error('复制失败');
+  }
+}
+
+function openCorrection() {
+  if (!auth.requireAiAccess()) return;
+  busEmit('lingshu:open-correction', {
+    text: localContent.value || '',
+  });
+}
+
+function openSearch() {
+  busEmit('lingshu:open-search', {
+    query: selectedSearchText(),
+  });
+}
+
+function selectedSearchText() {
+  const textarea = textareaRef.value;
+  if (!textarea) return '';
+  const selected = localContent.value.slice(textarea.selectionStart, textarea.selectionEnd).trim();
+  return selected && !selected.includes('\n') ? selected : '';
+}
+
+function onChapterFind(event) {
+  const detail = event || {};
+  if (!isForThisChapter(detail.chapterId)) return;
+  let start = Number(detail.start);
+  let end = Number(detail.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+    const range = findRange(String(detail.query || ''), detail.direction || 'next', Boolean(detail.caseSensitive));
+    if (!range) return;
+    start = range.start;
+    end = range.end;
+  }
+  selectRange(start, end);
+}
+
+function onChapterReplace(event) {
+  const detail = event || {};
+  if (!isForThisChapter(detail.chapterId)) return;
+  const query = String(detail.query || '');
+  if (!query) return;
+  const replacement = String(detail.replacement ?? '');
+  const caseSensitive = Boolean(detail.caseSensitive);
+  const text = localContent.value || '';
+
+  if (detail.all) {
+    const nextText = text.replace(new RegExp(escapeRegExp(query), caseSensitive ? 'g' : 'gi'), replacement);
+    if (nextText === text) return;
+    localContent.value = nextText;
+    nextTick(() => selectRange(0, 0));
+    return;
+  }
+
+  let start = Number(detail.start);
+  let end = Number(detail.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+    const range = findRange(query, 'next', caseSensitive);
+    if (!range) return;
+    start = range.start;
+    end = range.end;
+  }
+
+  const current = text.slice(start, end);
+  const matches = caseSensitive ? current === query : current.toLowerCase() === query.toLowerCase();
+  if (!matches) return;
+  localContent.value = `${text.slice(0, start)}${replacement}${text.slice(end)}`;
+  nextTick(() => selectRange(start, start + replacement.length));
+}
+
+function findRange(query, direction = 'next', caseSensitive = false) {
+  const needle = String(query || '');
+  if (!needle) return null;
+  const text = localContent.value || '';
+  const source = caseSensitive ? text : text.toLowerCase();
+  const target = caseSensitive ? needle : needle.toLowerCase();
+  const textarea = textareaRef.value;
+  const cursor = textarea ? (direction === 'prev' ? textarea.selectionStart : textarea.selectionEnd) : 0;
+  let start = direction === 'prev'
+    ? source.lastIndexOf(target, Math.max(0, cursor - 1))
+    : source.indexOf(target, cursor);
+  if (start < 0) {
+    start = direction === 'prev' ? source.lastIndexOf(target) : source.indexOf(target);
+  }
+  if (start < 0) return null;
+  return { start, end: start + needle.length };
+}
+
+function selectRange(start, end) {
+  const textarea = textareaRef.value;
+  if (!textarea) return;
+  const safeStart = Math.max(0, Math.min(start, localContent.value.length));
+  const safeEnd = Math.max(safeStart, Math.min(end, localContent.value.length));
+  textarea.focus();
+  textarea.setSelectionRange(safeStart, safeEnd);
+  scrollSelectionIntoView(safeStart);
+}
+
+function scrollSelectionIntoView(start) {
+  const textarea = textareaRef.value;
+  if (!textarea) return;
+  const line = localContent.value.slice(0, start).split('\n').length;
+  textarea.scrollTop = Math.max(0, (line - 4) * 24);
+  syncMarkerScroll();
+}
+
+function isForThisChapter(chapterId) {
+  return !chapterId || Number(chapterId) === Number(props.chapterId);
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function syncMarkerScroll() {
+  const textarea = textareaRef.value;
+  if (!textarea) return;
+  const scrollTop = textarea.scrollTop;
+  const viewportHeight = textarea.clientHeight;
+  const paddingY = VIRTUAL_PADDING_Y;
+
+  // 计算可见行范围（含缓冲区）
+  const firstVisible = Math.floor(Math.max(0, scrollTop - paddingY) / VIRTUAL_LINE_HEIGHT);
+  const lastVisible = Math.ceil((scrollTop + viewportHeight - paddingY) / VIRTUAL_LINE_HEIGHT);
+  visibleStartLine.value = Math.max(0, firstVisible - VIRTUAL_BUFFER);
+  visibleEndLine.value = Math.min(totalLineCount.value, lastVisible + VIRTUAL_BUFFER);
+
+  // 计算上下占位高度（包含 padding 补偿）
+  virtualScrollTop.value = visibleStartLine.value * VIRTUAL_LINE_HEIGHT + paddingY;
+  virtualScrollBottom.value = Math.max(0, (totalLineCount.value - visibleEndLine.value) * VIRTUAL_LINE_HEIGHT + paddingY);
+}
+
+function focus() {
+  textareaRef.value?.focus?.();
+}
+
+onMounted(() => {
+  on('lingshu:chapter-find', onChapterFind);
+  on('lingshu:chapter-replace', onChapterReplace);
+  nextTick(syncMarkerScroll);
+  loadProbeConfig();
+});
+
+onUnmounted(() => {
+  off('lingshu:chapter-find', onChapterFind);
+  off('lingshu:chapter-replace', onChapterReplace);
+  clearProbeTimer();
+});
+
+defineExpose({
+  wordCount,
+  focus,
+  onPolish,
+  copyChapter,
+  openCorrection,
+  openSearch,
+});
+</script>
+
+<style scoped>
+.content-editor-wrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-primary);
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 20px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.editor-title {
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.word-count {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  padding: 0 3px;
+}
+
+.ai-probability {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ai-probability--unknown {
+  color: var(--text-placeholder);
+  background: var(--bg-secondary);
+}
+
+.ai-probability--danger {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.10);
+}
+
+.ai-probability--warning {
+  color: #b7791f;
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.ai-probability--success {
+  color: #15803d;
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.chapter-actionbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 62px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border-light);
+  background: linear-gradient(180deg, var(--bg-primary), var(--bg-secondary));
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.chapter-actionbar::-webkit-scrollbar {
+  display: none;
+}
+
+.action-button {
+  height: 34px;
+  min-width: 84px;
+  padding: 0 16px;
+  border-radius: 6px;
+  font-weight: 700;
+}
+
+.primary-action {
+  min-width: 102px;
+}
+
+@media (max-width: 980px) {
+  .chapter-actionbar {
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .action-button {
+    min-width: 72px;
+    padding: 0 10px;
+  }
+}
+
+.editor-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+}
+
+.native-text-editor {
+  --content-font-size: var(--editor-font-size, 15px);
+  --content-line-height: var(--editor-line-height, 24px);
+  --content-gutter-width: 78px;
+  --content-editor-padding-y: 12px;
+  --content-editor-padding-right: 14px;
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.line-marker-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-right: var(--content-editor-padding-right);
+  color: #0c6f88;
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  font-size: var(--content-font-size);
+  line-height: var(--content-line-height);
+  pointer-events: none;
+  user-select: none;
+}
+
+.line-marker-spacer {
+  flex-shrink: 0;
+}
+
+.line-marker-row {
+  display: grid;
+  grid-template-columns: var(--content-gutter-width) minmax(0, 1fr);
+  align-items: start;
+  min-height: var(--content-line-height);
+}
+
+.line-marker {
+  box-sizing: border-box;
+  min-height: var(--content-line-height);
+  padding-right: 18px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.line-marker-text {
+  min-height: var(--content-line-height);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  visibility: hidden;
+}
+
+.line-marker-row--blank .line-marker-text {
+  white-space: pre;
+}
+
+.content-textarea {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: 0;
+  outline: none;
+  padding: var(--content-editor-padding-y) var(--content-editor-padding-right) var(--content-editor-padding-y) var(--content-gutter-width);
+  color: var(--text-primary);
+  background: transparent;
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  font-size: var(--content-font-size);
+  line-height: var(--content-line-height);
+  letter-spacing: 0;
+  overflow: auto;
+}
+
+.content-textarea::selection {
+  background: rgba(22, 163, 156, 0.22);
+}
+
+.content-textarea::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.content-textarea::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 5px;
+}
+
+.content-textarea::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+:global(.polish-dialog .el-dialog__body) {
+  padding-top: 6px;
+}
+
+.polish-dialog-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.polish-column {
+  min-width: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.polish-column-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 38px;
+  padding: 0 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.polish-text {
+  min-height: 260px;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 12px 14px;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.polish-text--before .diff-changed {
+  color: #c2410c;
+  background: rgba(248, 113, 113, 0.12);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.polish-text--after .diff-changed {
+  color: #dc2626;
+  background: rgba(248, 113, 113, 0.14);
+  font-weight: 700;
+}
+
+.polish-placeholder {
+  color: var(--text-placeholder);
+}
+
+@media (max-width: 860px) {
+  .polish-dialog-body {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

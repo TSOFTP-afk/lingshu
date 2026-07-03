@@ -1,0 +1,139 @@
+"""
+共享依赖注入 — 提供 BookstoreStore 实例和认证辅助函数。
+
+状态存储在 FastAPI app.state 上，通过 Depends 提供依赖注入，
+避免模块级全局变量，利于测试和多实例场景。
+"""
+from __future__ import annotations
+
+import logging
+import secrets
+from typing import Any
+
+from fastapi import Header, HTTPException, Request
+
+from lingshu_api.services.book_sync import BookSyncService
+from lingshu_api.services.db_bridge import WorkspaceDB
+from novel_app.bookstore import BookstoreStore, CloudBookStore, _bearer_token, _public_user
+
+# ── setter：由 main.py 在 create_app 时调用，写入 app.state ──────────
+
+def set_store(app, store: BookstoreStore) -> None:
+    """设置 store 实例到 app.state（在 create_app 时调用）。"""
+    app.state.store = store
+
+
+def set_cloud_store(app, cloud_store: CloudBookStore) -> None:
+    """设置 CloudBookStore 实例到 app.state（在 create_app 时调用）。"""
+    app.state.cloud_store = cloud_store
+
+
+def set_sync_service(app, service: BookSyncService) -> None:
+    """设置 BookSyncService 实例到 app.state（在 create_app 时调用）。"""
+    app.state.sync_service = service
+
+
+# ── FastAPI 依赖：通过 Request.app.state 读取 ──────────────────────
+
+def get_store(request: Request) -> BookstoreStore:
+    """FastAPI 依赖：获取 BookstoreStore 实例。"""
+    store = getattr(request.app.state, 'store', None)
+    if store is None:
+        raise HTTPException(status_code=500, detail="Store 未初始化")
+    return store
+
+
+def get_cloud_store(request: Request) -> CloudBookStore:
+    """FastAPI 依赖：获取 CloudBookStore 实例。"""
+    cloud_store = getattr(request.app.state, 'cloud_store', None)
+    if cloud_store is None:
+        raise HTTPException(status_code=500, detail="CloudStore 未初始化")
+    return cloud_store
+
+
+def get_sync_service(request: Request) -> BookSyncService:
+    """FastAPI 依赖：获取 BookSyncService 实例。"""
+    sync_service = getattr(request.app.state, 'sync_service', None)
+    if sync_service is None:
+        raise HTTPException(status_code=500, detail="SyncService 未初始化")
+    return sync_service
+
+
+def get_optional_user(request: Request, authorization: str = Header(default="")) -> dict[str, Any] | None:
+    """解析 Authorization 头，返回用户信息或 None。"""
+    token = _bearer_token(authorization)
+    if not token:
+        return None
+    return _public_user(get_store(request).get_user_by_token(token))
+
+
+def require_login(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    """要求已登录，返回用户信息。"""
+    token = _bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="未登录")
+    user = get_store(request).get_user_by_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="登录已过期")
+    return user
+
+
+def require_ai_access(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    """AI 功能统一门禁：所有会调用模型或配置模型的入口必须先登录。"""
+    token = _bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="请先登录后使用 AI 功能")
+    user = get_store(request).get_user_by_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="登录已过期，请重新登录后使用 AI 功能")
+    return user
+
+
+def require_author(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    """要求已登录且为作者身份。"""
+    user = require_login(request, authorization)
+    if not int(user.get("is_author") or 0):
+        raise HTTPException(status_code=403, detail="当前账号不是作者账号")
+    return user
+
+
+def require_admin(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    """要求已登录且为管理员身份。"""
+    user = require_login(request, authorization)
+    if not int(user.get("is_admin") or 0):
+        raise HTTPException(status_code=403, detail="管理员权限不足")
+    return user
+
+
+def verify_publish_token(
+    x_publish_token: str = Header(default=""),
+    resolved_token: str | None = None,
+) -> bool:
+    """验证桌面端发布令牌。"""
+    if not resolved_token:
+        raise HTTPException(status_code=503, detail="发布令牌未配置，已拒绝写入")
+    if not secrets.compare_digest(x_publish_token, resolved_token):
+        raise HTTPException(status_code=401, detail="发布令牌无效")
+    return True
+
+
+_logger = logging.getLogger(__name__)
+
+
+def try_cloud_sync(request: Request, book_id: int, user: dict | None) -> None:
+    """已登录时执行云端同步：静默收集 + 已上传书籍编辑同步。"""
+    if not user:
+        return
+    try:
+        sync_service = get_sync_service(request)
+        user_id = int(user["id"])
+        sync_service.silent_collect(book_id, user_id)
+        sync_service.sync_book_edit(book_id, user_id)
+    except Exception as e:
+        _logger.warning("云端同步失败: book_id=%s, user_id=%s, error=%s", book_id, user.get("id"), e)
+
+
+def check_book_owner(db: WorkspaceDB, book_id: int, user: dict) -> None:
+    """校验书籍归属，不属于当前用户则抛 403。"""
+    if not db.check_book_ownership(book_id, int(user["id"])):
+        raise HTTPException(status_code=403, detail="无权操作该书籍")

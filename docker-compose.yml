@@ -1,0 +1,59 @@
+# ============================================================
+# 灵枢 Redis 缓存服务 — hybrid-database-architecture spec Task 4.9
+# ============================================================
+# 用途：
+#   - 云端部署（ling-shu.top）：与 FastAPI 后端同机/同网络部署，提供书籍树/章节/分析状态缓存 + 分布式锁
+#   - 本地开发：开发者可 `docker compose up -d redis` 启用缓存层
+#
+# 桌面端（Electron 打包）说明：
+#   桌面应用不依赖 Redis。novel_app/db/redis_client.py 在 Redis 不可用时
+#   自动优雅降级（所有缓存方法返回 None/False，分布式锁返回伪 token），
+#   业务逻辑不受影响。如需在桌面端启用缓存，设置环境变量 REDIS_URL 即可。
+#
+# 环境变量（与 novel_app/db/redis_client.py 对齐）：
+#   REDIS_URL         — 完整连接 URL（优先），如 redis://:密码@127.0.0.1:6379/0
+#   REDIS_HOST        — 默认 127.0.0.1
+#   REDIS_PORT        — 默认 6379
+#   REDIS_DB          — 默认 0
+#   REDIS_PASSWORD    — 默认空（生产环境必须设置）
+# ============================================================
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: lingshu-redis
+    restart: unless-stopped
+    # 生产环境务必设置强密码（通过环境变量 REDIS_PASSWORD 传入）
+    command: >
+      sh -c '
+        redis-server
+        --requirepass "$${REDIS_PASSWORD:-lingshu_dev_password}"
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --appendonly yes
+        --appendfsync everysec
+      '
+    environment:
+      # 通过 .env 文件或 -e 参数覆盖；此处仅给开发默认值
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-lingshu_dev_password}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "$${REDIS_PASSWORD:-lingshu_dev_password}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    # 缓存场景 256mb 足够；allkeys-lru 保证内存不超限
+    mem_limit: 384m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  redis-data:
+    driver: local

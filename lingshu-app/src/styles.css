@@ -1,0 +1,199 @@
+/* ============================================================
+   灵枢创作工作台 — 全局样式
+   ============================================================ */
+
+/* CSS 变量 — 主题系统（默认：white 白昼） */
+:root {
+  --bg-primary: #fbfcfd;
+  --bg-secondary: #f3f6f8;
+  --bg-tertiary: #e9eef3;
+  --bg-hover: #e3f4f1;
+  --bg-active: #d4eeea;
+
+  --text-primary: #17202a;
+  --text-regular: #44515f;
+  --text-secondary: #718092;
+  --text-placeholder: #a7b1bd;
+
+  --border-color: #d7dee6;
+  --border-light: #e4e9ef;
+
+  --color-primary: #0f8f86;
+  --color-primary-light: #8bd7ce;
+  --color-success: #3d9b5d;
+  --color-warning: #bd7b16;
+  --color-danger: #d84c4c;
+  --color-info: #667586;
+
+  --shadow-sm: 0 1px 2px rgba(24, 36, 50, 0.06);
+  --shadow-md: 0 8px 24px rgba(24, 36, 50, 0.10);
+  --shadow-lg: 0 18px 48px rgba(24, 36, 50, 0.14);
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 8px;
+
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-base: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 18px;
+
+  --header-height: 48px;
+  --statusbar-height: 28px;
+  --editor-font-size: 15px;
+  --editor-line-height: 24px;
+
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+
+  --el-color-primary: var(--color-primary);
+  --el-color-primary-light-3: #42b8ae;
+  --el-color-primary-light-5: #79cbc3;
+  --el-color-primary-light-7: #b4e3de;
+  --el-color-primary-light-8: #c9ece8;
+  --el-color-primary-light-9: #e8f7f5;
+  --el-color-primary-dark-2: #0b6f68;
+  --el-border-radius-base: 6px;
+}
+
+/* 主题：浅蓝 */
+.theme-light-blue {
+  --bg-primary: #f0f5ff;
+  --bg-secondary: #e6f0ff;
+  --bg-tertiary: #d6e4ff;
+  --bg-hover: #c9dbff;
+  --bg-active: #b3cfff;
+  --text-primary: #1d2b4d;
+  --text-regular: #3a4a6b;
+  --text-secondary: #6b7a99;
+  --border-color: #c4d4ed;
+  --border-light: #d9e3f5;
+  --color-primary: #366ef6;
+}
+
+/* 主题：暗夜 */
+.theme-night {
+  --bg-primary: #1e1e2e;
+  --bg-secondary: #252536;
+  --bg-tertiary: #2d2d44;
+  --bg-hover: #35355a;
+  --bg-active: #40407a;
+  --text-primary: #e0e0e0;
+  --text-regular: #b0b0c0;
+  --text-secondary: #707088;
+  --border-color: #3a3a50;
+  --border-light: #2e2e40;
+  --color-primary: #6c8cff;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* 主题：羊皮纸 */
+.theme-sepia {
+  --bg-primary: #f4ecd8;
+  --bg-secondary: #efe3c3;
+  --bg-tertiary: #e8d9ae;
+  --bg-hover: #dcc896;
+  --bg-active: #d0b878;
+  --text-primary: #4a3728;
+  --text-regular: #6b5344;
+  --text-secondary: #8b7355;
+  --border-color: #c4a97a;
+  --border-light: #d4c4a0;
+  --color-primary: #8b5e3c;
+}
+
+/* ------------------------------------------------------------------ */
+/*  全局重置                                                           */
+/* ------------------------------------------------------------------ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  font-size: var(--font-size-base);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  height: 100%;
+  overflow: hidden;
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-placeholder);
+}
+
+/* Element Plus 主题化覆盖 */
+.el-button {
+  border-radius: 7px;
+  font-weight: 600;
+}
+
+.el-button.is-text {
+  color: var(--text-regular);
+}
+
+.el-button.is-text:hover {
+  background: var(--bg-hover);
+  color: var(--color-primary);
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: 7px;
+}
+
+.el-dialog {
+  border-radius: var(--radius-lg);
+}
+
+.splitpanes.default-theme .splitpanes__pane {
+  background: transparent;
+}
+
+.splitpanes.default-theme .splitpanes__splitter {
+  background-color: var(--border-light);
+  border-color: var(--border-color);
+  position: relative;
+}
+
+.splitpanes.default-theme .splitpanes__splitter:hover {
+  background-color: var(--color-primary-light);
+}
+
+.theme-night .el-dialog,
+.theme-night .el-drawer,
+.theme-night .el-message-box {
+  --el-bg-color: var(--bg-secondary);
+  --el-text-color-primary: var(--text-primary);
+}

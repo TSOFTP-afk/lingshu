@@ -1,0 +1,28 @@
+"""向后兼容入口 — 所有公开符号从 bookstore 子模块 re-export。"""
+from novel_app.bookstore import *  # noqa: F401,F403
+from novel_app.bookstore import (  # noqa: F401
+    DEFAULT_DB_PATH,
+    DEFAULT_WEB_BASE_URL,
+    AdminBookUpdatePayload,
+    AdminChapterUpdatePayload,
+    AdminUserUpdatePayload,
+    AuthorBookCreatePayload,
+    AuthorBookUpdatePayload,
+    AuthorChapterUpdatePayload,
+    BookshelfCreatePayload,
+    BookshelfProgressPayload,
+    BookstoreStore,
+    CloudBookStore,
+    LoginPayload,
+    PublishChapterPayload,
+    RegisterPayload,
+    TrustDevicePayload,
+    _admin_usernames_from_env,
+    _bearer_token,
+    _public_user,
+    app,
+    client_password_hash,
+    create_app,
+    estimate_token_count,
+    initialize_database,
+)

@@ -1,0 +1,17 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM"]
+ignore = [
+  "E501",
+  # FastAPI's Depends/Header/Query defaults are framework idioms in this codebase.
+  "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"novel_app/db/*.py" = ["F403", "F405"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["novel_app", "lingshu_api"]

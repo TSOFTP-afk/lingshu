@@ -1,0 +1,3467 @@
+灵枢智能写作工作台软件 V2.0 源代码
+
+申请人：（请填写申请人姓名）
+软件名称：灵枢智能写作工作台软件
+版本号：V2.0
+
+本源代码文档共 60 页（前 30 页 + 后 30 页），每页约 50 行。
+代码来源：项目自研代码（已剔除 vendor / node_modules / __pycache__ 等第三方与缓存目录）。
+
+============================================================
+                      源代码（前 30 页）
+============================================================
+
+
+
+===== File: lingshu_api/dependencies.py =====
+
+"""
+共享依赖注入 — 提供 BookstoreStore 实例和认证辅助函数。
+
+状态存储在 FastAPI app.state 上，通过 Depends 提供依赖注入，
+避免模块级全局变量，利于测试和多实例场景。
+"""
+from __future__ import annotations
+
+import logging
+import secrets
+from typing import Any
+
+from fastapi import Header, HTTPException, Request
+
+from lingshu_api.services.book_sync import BookSyncService
+from lingshu_api.services.db_bridge import WorkspaceDB
+from novel_app.bookstore import BookstoreStore, CloudBookStore, _bearer_token, _public_user
+
+# ── setter：由 main.py 在 create_app 时调用，写入 app.state ──────────
+
+def set_store(app, store: BookstoreStore) -> None:
+    """设置 store 实例到 app.state（在 create_app 时调用）。"""
+    app.state.store = store
+
+
+def set_cloud_store(app, cloud_store: CloudBookStore) -> None:
+    """设置 CloudBookStore 实例到 app.state（在 create_app 时调用）。"""
+    app.state.cloud_store = cloud_store
+
+
+def set_sync_service(app, service: BookSyncService) -> None:
+    """设置 BookSyncService 实例到 app.state（在 create_app 时调用）。"""
+    app.state.sync_service = service
+
+
+# ── FastAPI 依赖：通过 Request.app.state 读取 ──────────────────────
+
+def get_store(request: Request) -> BookstoreStore:
+    """FastAPI 依赖：获取 BookstoreStore 实例。"""
+    store = getattr(request.app.state, 'store', None)
+    if store is None:
+        raise HTTPException(status_code=500, detail="Store 未初始化")
+    return store
+
+
+def get_cloud_store(request: Request) -> CloudBookStore:
+    """FastAPI 依赖：获取 CloudBookStore 实例。"""
+    cloud_store = getattr(request.app.state, 'cloud_store', None)
+    if cloud_store is None:
+        raise HTTPException(status_code=500, detail="CloudStore 未初始化")
+    return cloud_store
+
+
+def get_sync_service(request: Request) -> BookSyncService:
+    """FastAPI 依赖：获取 BookSyncService 实例。"""
+    sync_service = getattr(request.app.state, 'sync_service', None)
+    if sync_service is None:
+        raise HTTPException(status_code=500, detail="SyncService 未初始化")
+    return sync_service
+
+
+def get_optional_user(request: Request, authorization: str = Header(default="")) -> dict[str, Any] | None:
+    """解析 Authorization 头，返回用户信息或 None。"""
+    token = _bearer_token(authorization)
+    if not token:
+        return None
+    return _public_user(get_store(request).get_user_by_token(token))
+
+
+def require_login(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    """要求已登录，返回用户信息。"""
+    token = _bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="未登录")
+    user = get_store(request).get_user_by_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="登录已过期")
+    return user
+
+
+def require_ai_access(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    """AI 功能统一门禁：所有会调用模型或配置模型的入口必须先登录。"""
+    token = _bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="请先登录后使用 AI 功能")
+    user = get_store(request).get_user_by_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="登录已过期，请重新登录后使用 AI 功能")
+    return user
+
+
+def require_author(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    """要求已登录且为作者身份。"""
+    user = require_login(request, authorization)
+    if not int(user.get("is_author") or 0):
+        raise HTTPException(status_code=403, detail="当前账号不是作者账号")
+    return user
+
+
+def require_admin(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    """要求已登录且为管理员身份。"""
+    user = require_login(request, authorization)
+    if not int(user.get("is_admin") or 0):
+        raise HTTPException(status_code=403, detail="管理员权限不足")
+    return user
+
+
+def verify_publish_token(
+    x_publish_token: str = Header(default=""),
+    resolved_token: str | None = None,
+) -> bool:
+    """验证桌面端发布令牌。"""
+    if not resolved_token:
+        raise HTTPException(status_code=503, detail="发布令牌未配置，已拒绝写入")
+    if not secrets.compare_digest(x_publish_token, resolved_token):
+        raise HTTPException(status_code=401, detail="发布令牌无效")
+    return True
+
+
+_logger = logging.getLogger(__name__)
+
+
+def try_cloud_sync(request: Request, book_id: int, user: dict | None) -> None:
+    """已登录时执行云端同步：静默收集 + 已上传书籍编辑同步。"""
+    if not user:
+        return
+    try:
+        sync_service = get_sync_service(request)
+        user_id = int(user["id"])
+        sync_service.silent_collect(book_id, user_id)
+        sync_service.sync_book_edit(book_id, user_id)
+    except Exception as e:
+        _logger.warning("云端同步失败: book_id=%s, user_id=%s, error=%s", book_id, user.get("id"), e)
+
+
+def check_book_owner(db: WorkspaceDB, book_id: int, user: dict) -> None:
+    """校验书籍归属，不属于当前用户则抛 403。"""
+    if not db.check_book_ownership(book_id, int(user["id"])):
+        raise HTTPException(status_code=403, detail="无权操作该书籍")
+
+
+===== File: lingshu_api/main.py =====
+
+"""
+灵枢统一 FastAPI 应用入口。
+
+启动方式:
+    uvicorn lingshu_api.main:app --host 0.0.0.0 --port 8787
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import sys
+from contextlib import asynccontextmanager, suppress
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from starlette.responses import JSONResponse
+
+# 确保项目根目录在 sys.path 中（开发环境）
+_project_root = Path(__file__).resolve().parents[1]
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+
+DEFAULT_DB_PATH = _project_root / "data" / "bookstore_demo.db"
+
+
+def create_app(db_path: Path | None = None) -> FastAPI:
+    """创建并配置 FastAPI 应用。"""
+    from lingshu_api.dependencies import set_cloud_store, set_store, set_sync_service
+    from lingshu_api.routers import admin, admin_auth, auth, bookshelf, bookstore, workspace
+    from lingshu_api.services.book_sync import BookSyncService
+    from lingshu_api.services.db_bridge import WorkspaceDBProvider
+    from novel_app.bookstore import BookstoreStore, CloudBookStore, _admin_usernames_from_env
+
+    resolved_db_path = db_path or Path(os.environ.get("BOOKSTORE_DB_PATH", "") or DEFAULT_DB_PATH)
+    store = BookstoreStore(resolved_db_path)
+    store.sync_admin_users(_admin_usernames_from_env())
+
+    cloud_store = CloudBookStore(resolved_db_path)
+
+    class _NonClosingWorkspaceDB:
+        def __init__(self, target):
+            self._target = target
+
+        def __getattr__(self, name):
+            return getattr(self._target, name)
+
+        def close(self):
+            return None
+
+    workspace_provider = WorkspaceDBProvider()
+
+    sync_service = BookSyncService(
+        cloud_store=cloud_store,
+        workspace_db_factory=lambda: _NonClosingWorkspaceDB(workspace_provider.get()),
+    )
+
+    # lifespan 替代已废弃的 on_event
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        # startup: 启动 WebSocket 心跳 + 清理过期管理员 Token
+        from lingshu_api.ws.connection import get_ws_manager
+        ping_task = asyncio.create_task(get_ws_manager().ping_loop())
+        try:
+            from lingshu_api.routers.admin_auth import _get_db_path, cleanup_on_startup
+            cleanup_on_startup(_get_db_path(store))
+        except Exception:
+            pass
+        yield
+        # shutdown: 取消心跳任务
+        ping_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await ping_task
+        workspace_provider.close()
+
+    _disable_docs = os.environ.get("DISABLE_API_DOCS", "true").lower() in ("true", "1", "yes")
+    app = FastAPI(
+        title="灵枢 API",
+        lifespan=lifespan,
+        docs_url=None if _disable_docs else "/docs",
+        redoc_url=None if _disable_docs else "/redoc",
+        openapi_url=None if _disable_docs else "/openapi.json",
+    )
+
+    # 将 store / cloud_store / sync_service 写入 app.state
+    set_store(app, store)
+    set_cloud_store(app, cloud_store)
+    set_sync_service(app, sync_service)
+    app.state.workspace_db_provider = workspace_provider
+
+    # 限流
+    limiter = Limiter(key_func=get_remote_address)
+    app.state.limiter = limiter
+
+    @app.exception_handler(RateLimitExceeded)
+    async def _rate_limit_handler(request, exc):
+        return JSONResponse(status_code=429, content={"detail": "请求过于频繁，请稍后再试"})
+
+    from fastapi.exceptions import RequestValidationError
+    from starlette.exceptions import HTTPException
+
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(request, exc):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_exception_handler(request, exc):
+        errors = [
+            {
+                "field": ".".join(str(loc) for loc in err.get("loc", [])),
+                "message": err.get("msg", ""),
+                "type": err.get("type", ""),
+            }
+            for err in exc.errors()
+        ]
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "请求参数验证失败", "errors": errors},
+        )
+
+    @app.exception_handler(Exception)
+    async def _generic_exception_handler(request, exc):
+        logger = logging.getLogger("lingshu.api")
+        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "服务器内部错误，请稍后重试"},
+        )
+
+    # CORS — 生产环境必须通过 CORS_ORIGINS 环境变量配置允许的源
+    _cors_env = os.environ.get("CORS_ORIGINS", "").strip()
+    if _cors_env:
+        allow_origins = [origin.strip() for origin in _cors_env.split(",") if origin.strip()]
+    else:
+        # 开发环境默认值 — 仅允许已知端口
+        allow_origins = [
+            "http://127.0.0.1:5173", "http://localhost:5173",
+            "http://127.0.0.1:5174", "http://localhost:5174",
+            "http://127.0.0.1:5175", "http://localhost:5175",
+            "http://127.0.0.1:5176", "http://localhost:5176",
+            "https://www.ling-shu.top", "https://ling-shu.top",
+        ]
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allow_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Publish-Token",
+            "X-Client-KeyId",
+            "X-Client-Ts",
+            "X-Client-Sig",
+        ],
+    )
+
+    # 安全响应头中间件
+    @app.middleware("http")
+    async def add_security_headers(request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        # CSP 仅对页面资源有意义，对 /api/ JSON 响应反而会触发浏览器跨域误判（net::ERR_FAILED）
+        path = request.scope.get("path", "")
+        if not (path or "").startswith("/api/"):
+            response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self' ws: wss:;"
+        return response
+
+    @app.middleware("http")
+    async def _admin_hmac_guard(request, call_next):
+        path = request.url.path
+        # 同时保护 /api/admin/ 和 /api/v1/admin/ 路径
+        is_admin_path = (
+            path.startswith("/api/admin/") or path.startswith("/api/v1/admin/")
+        )
+        is_login = path in ("/api/admin/auth/login", "/api/v1/admin/auth/login")
+        if is_admin_path and not is_login:
+            from fastapi import HTTPException
+
+            from lingshu_api.routers.admin_auth import _admin_keys_configured, verify_admin_hmac_headers
+
+            if not _admin_keys_configured(resolved_db_path):
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "管理后台未配置安全密钥，请联系管理员配置 HMAC 密钥后重试"},
+                )
+
+            try:
+                verify_admin_hmac_headers(resolved_db_path, request)
+            except HTTPException as exc:
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+        return await call_next(request)
+
+    @app.middleware("http")
+    async def _api_v1_alias(request, call_next):
+        path = str(request.scope.get("path") or "")
+        if path.startswith("/api/v1/"):
+            request.scope["lingshu.original_path"] = path
+            aliased = "/api/" + path.removeprefix("/api/v1/")
+            request.scope["path"] = aliased
+            request.scope["raw_path"] = aliased.encode("ascii")
+        return await call_next(request)
+
+    # API 版本说明:
+    # 当前所有 /api/ 路由即为 v1 版本
+    # 未来 v2 路由将挂载在 /api/v2/ 前缀下
+    # 客户端可通过 /api/v1/ 前缀访问（与 /api/ 等价）
+    api_version = "v1"
+
+    # 挂载 REST 路由（/api/ 前缀 — 向后兼容）
+    app.include_router(auth.router)
+    app.include_router(bookshelf.router)
+    app.include_router(bookstore.router)
+    app.include_router(admin_auth.router)
+    app.include_router(admin.router)
+    app.include_router(workspace.router)
+
+    # 挂载阶段2新增路由
+    from lingshu_api.routers import (
+        analysis_v3,
+        characters,
+        rag,
+        references,
+        settings,
+        skills,
+    )
+    from lingshu_api.routers import (
+        export as export_router,
+    )
+    from lingshu_api.routers import (
+        world as world_router,
+    )
+    app.include_router(analysis_v3.router)
+    app.include_router(characters.router)
+    app.include_router(world_router.router)
+    app.include_router(skills.router)
+    app.include_router(references.router)
+    app.include_router(rag.router)
+    app.include_router(export_router.router)
+    app.include_router(settings.router)
+
+    # 挂载云端同步路由
+    from lingshu_api.routers import cloud_books
+    app.include_router(cloud_books.router)
+
+    # 挂载 WebSocket 路由
+    from lingshu_api.ws import analysis_v3_ws, chat, generation, review_ws
+    app.include_router(generation.router)
+    app.include_router(review_ws.router)
+    app.include_router(analysis_v3_ws.router)
+    app.include_router(chat.router)
+
+    @app.get("/api/health")
+    def health():
+        return {"ok": True, "version": api_version}
+
+    @app.get("/api/v1/health")
+    def health_v1():
+        return {"ok": True, "version": api_version}
+
+    return app
+
+
+# 模块级 app 实例（兼容 uvicorn 直接导入）
+app = create_app()
+
+
+===== File: lingshu_api/routers/admin.py =====
+
+"""
+管理后台路由 — 用户管理、作品管理、章节管理、书架管理、审计日志。
+"""
+from typing import Any
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+
+from lingshu_api.dependencies import get_store
+from lingshu_api.routers.admin_auth import (
+    _admin_keys_configured,
+    _ensure_admin_tables,
+    _get_admin_by_token,
+    _get_db_path,
+    verify_admin_hmac_headers,
+)
+from novel_app.bookstore import (
+    AdminBookUpdatePayload,
+    AdminChapterUpdatePayload,
+    AdminUserUpdatePayload,
+    BookstoreStore,
+    _bearer_token,
+)
+
+router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+def _require_admin(request: Request, authorization: str, store: BookstoreStore) -> dict[str, Any]:
+    token = _bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="未登录")
+    db_path = _get_db_path(store)
+    _ensure_admin_tables(db_path)
+    # 双因子验证：HMAC 签名 + Bearer Token
+    if _admin_keys_configured(db_path):
+        verify_admin_hmac_headers(db_path, request)
+    admin = _get_admin_by_token(db_path, token)
+    if not admin:
+        raise HTTPException(status_code=401, detail="管理员登录已过期或无效")
+    return admin
+
+
+@router.get("/overview")
+def overview(request: Request, authorization: str = Header(default=""), store: BookstoreStore = Depends(get_store)):
+    _require_admin(request, authorization, store)
+    return store.admin_overview()
+
+
+@router.get("/user-stats")
+def user_stats(
+    request: Request,
+    granularity: str = Query(default="monthly"),
+    year: int | None = Query(default=None),
+    month: str | None = Query(default=None),
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    return store.admin_user_stats(granularity=granularity, year=year, month=month)
+
+
+@router.get("/quotas")
+def list_quotas(
+    request: Request,
+    q: str = Query(default=""),
+    tier: str = Query(default=""),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    return store.admin_list_quotas(q=q, tier=tier, page=page, page_size=page_size)
+
+
+@router.get("/users")
+def list_users(
+    request: Request,
+    q: str = Query(default=""),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    return store.admin_list_users(q=q, page=page, page_size=page_size)
+
+
+@router.get("/users/{user_id}")
+def get_user(
+    user_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    item = store.admin_get_user(user_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return item
+
+
+@router.patch("/users/{user_id}")
+def update_user(
+    user_id: int,
+    payload: AdminUserUpdatePayload,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    item = store.admin_update_user(int(admin["id"]), user_id, payload)
+    if not item:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return {"ok": True, "item": item}
+
+
+@router.delete("/users/{user_id}")
+def disable_user(
+    user_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    if not store.admin_disable_user(int(admin["id"]), user_id):
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/restore")
+def restore_user(
+    user_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    if not store.admin_restore_user(int(admin["id"]), user_id):
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return {"ok": True}
+
+
+@router.get("/books")
+def list_books(
+    request: Request,
+    q: str = Query(default=""),
+    include_deleted: bool = Query(default=True),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    return store.admin_list_books(q=q, include_deleted=include_deleted, page=page, page_size=page_size)
+
+
+@router.get("/books/{book_id}")
+def get_book(
+    book_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    item = store.admin_get_book(book_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="作品不存在")
+    return item
+
+
+@router.patch("/books/{book_id}")
+def update_book(
+    book_id: int,
+    payload: AdminBookUpdatePayload,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    item = store.admin_update_book(int(admin["id"]), book_id, payload)
+    if not item:
+        raise HTTPException(status_code=404, detail="作品不存在")
+    return {"ok": True, "item": item}
+
+
+@router.delete("/books/{book_id}")
+def delete_book(
+    book_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    if not store.admin_soft_delete_book(int(admin["id"]), book_id):
+        raise HTTPException(status_code=404, detail="作品不存在")
+    return {"ok": True}
+
+
+@router.post("/books/{book_id}/restore")
+def restore_book(
+    book_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    if not store.admin_restore_book(int(admin["id"]), book_id):
+        raise HTTPException(status_code=404, detail="作品不存在")
+    return {"ok": True}
+
+
+@router.get("/chapters")
+def list_chapters(
+    request: Request,
+    book_id: int | None = Query(default=None),
+    q: str = Query(default=""),
+    include_deleted: bool = Query(default=True),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    return store.admin_list_chapters(book_id=book_id, q=q, include_deleted=include_deleted, page=page, page_size=page_size)
+
+
+@router.get("/chapters/{chapter_id}")
+def get_chapter(
+    chapter_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    item = store.admin_get_chapter(chapter_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    return item
+
+
+@router.patch("/chapters/{chapter_id}")
+def update_chapter(
+    chapter_id: int,
+    payload: AdminChapterUpdatePayload,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    item = store.admin_update_chapter(int(admin["id"]), chapter_id, payload)
+    if not item:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    return {"ok": True, "item": item}
+
+
+@router.delete("/chapters/{chapter_id}")
+def delete_chapter(
+    chapter_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    result = store.admin_soft_delete_chapter(int(admin["id"]), chapter_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    return {"ok": True, "hard_deleted": result.get("hard_deleted", False)}
+
+
+@router.post("/chapters/{chapter_id}/restore")
+def restore_chapter(
+    chapter_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    if not store.admin_restore_chapter(int(admin["id"]), chapter_id):
+        raise HTTPException(status_code=404, detail="章节不存在")
+    return {"ok": True}
+
+
+@router.get("/bookshelf/shelves")
+def list_bookshelf_shelves(
+    request: Request,
+    include_deleted: bool = Query(default=True),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    return store.admin_list_bookshelf_shelves(include_deleted=include_deleted, page=page, page_size=page_size)
+
+
+@router.get("/bookshelf/items")
+def list_bookshelf_items(
+    request: Request,
+    include_deleted: bool = Query(default=True),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    return store.admin_list_bookshelf_items(include_deleted=include_deleted, page=page, page_size=page_size)
+
+
+@router.delete("/bookshelf/shelves/{shelf_id}")
+def delete_bookshelf_shelf(
+    shelf_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    if not store.admin_soft_delete_shelf(int(admin["id"]), shelf_id):
+        raise HTTPException(status_code=404, detail="书架不存在")
+    return {"ok": True}
+
+
+@router.post("/bookshelf/shelves/{shelf_id}/restore")
+def restore_bookshelf_shelf(
+    shelf_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    if not store.admin_restore_shelf(int(admin["id"]), shelf_id):
+        raise HTTPException(status_code=404, detail="书架不存在")
+    return {"ok": True}
+
+
+@router.delete("/bookshelf/items/{item_id}")
+def delete_bookshelf_item(
+    item_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    if not store.admin_soft_delete_shelf_item(int(admin["id"]), item_id):
+        raise HTTPException(status_code=404, detail="书架条目不存在")
+    return {"ok": True}
+
+
+@router.post("/bookshelf/items/{item_id}/restore")
+def restore_bookshelf_item(
+    item_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    if not store.admin_restore_shelf_item(int(admin["id"]), item_id):
+        raise HTTPException(status_code=404, detail="书架条目不存在")
+    return {"ok": True}
+
+
+@router.get("/tokens")
+def list_tokens(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    return store.admin_list_tokens(page=page, page_size=page_size)
+
+
+@router.delete("/tokens/{token}")
+def revoke_token(
+    token: str,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    if not store.admin_revoke_token(int(admin["id"]), token):
+        raise HTTPException(status_code=404, detail="token 不存在")
+    return {"ok": True}
+
+
+@router.get("/devices")
+def list_devices(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    return store.admin_list_devices(page=page, page_size=page_size)
+
+
+@router.delete("/devices/{device_id}")
+def revoke_device(
+    device_id: int,
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    admin = _require_admin(request, authorization, store)
+    if not store.admin_revoke_device(int(admin["id"]), device_id):
+        raise HTTPException(status_code=404, detail="可信设备不存在")
+    return {"ok": True}
+
+
+@router.get("/audit-logs")
+def audit_logs(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=5, le=100),
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+):
+    _require_admin(request, authorization, store)
+    return store.admin_list_audit_logs(page=page, page_size=page_size)
+
+
+===== File: lingshu_api/routers/admin_auth.py =====
+
+"""
+管理员独立认证路由。
+
+云端管理后台使用 admin_users / admin_auth_tokens，与普通用户登录完全分离。
+"""
+from __future__ import annotations
+
+import base64
+import contextlib
+import hashlib
+import hmac
+import logging
+import os
+import secrets
+import sqlite3
+import time
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import bcrypt
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+from lingshu_api.dependencies import get_store
+from lingshu_api.schemas.admin_auth import AdminLoginPayload
+from novel_app.bookstore import BookstoreStore, _bearer_token
+from novel_app.bookstore.models import _sql_identifier
+
+router = APIRouter(prefix="/api/admin/auth", tags=["admin-auth"])
+
+
+def _admin_rate_limit_key(request: Request) -> str:
+    return f"{get_remote_address(request)}:{id(request.app)}"
+
+
+limiter = Limiter(key_func=_admin_rate_limit_key)
+
+_ADMIN_TOKENS_TABLE = "admin_auth_tokens"
+_ADMIN_KEYS_TABLE = "admin_keys"
+_ADMIN_HMAC_WINDOW_MS = 5 * 60 * 1000
+
+# Token 有效期（小时），可通过环境变量覆盖
+_ADMIN_TOKEN_TTL_HOURS = int(os.environ.get("ADMIN_TOKEN_TTL_HOURS", "24"))
+
+
+def _cleanup_expired_tokens(db_path: Path) -> int:
+    """清理过期的管理员 Token，返回删除数量。"""
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute(
+            f"DELETE FROM {_ADMIN_TOKENS_TABLE} WHERE expires_at <= datetime('now')"
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
+def cleanup_on_startup(db_path: Path) -> None:
+    """应用启动时清理过期 Token。"""
+    try:
+        count = _cleanup_expired_tokens(db_path)
+        if count > 0:
+            logging.getLogger("lingshu.admin_auth").info("清理了 %d 个过期管理员 Token", count)
+    except Exception:
+        pass  # 启动时不应因清理失败而中断
+
+
+def _admin_token_hash(token: str) -> str:
+    """Hash an admin token for secure storage."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _get_db_path(store: BookstoreStore) -> Path:
+    return store.db_path
+
+
+def _get_encryption_key(db_path: Path) -> bytes:
+    """获取或生成 HMAC 密钥的 AES-256 加密密钥。
+    优先从环境变量 ADMIN_HMAC_ENCRYPTION_KEY 读取（base64 编码的 32 字节密钥），
+    否则从数据库同目录的 .admin_encryption_key 文件读取，若不存在则自动生成。"""
+    env_key = os.environ.get("ADMIN_HMAC_ENCRYPTION_KEY")
+    if env_key:
+        return base64.b64decode(env_key)
+    p = Path(db_path) if not isinstance(db_path, Path) else db_path
+    key_file = p.parent / ".admin_encryption_key"
+    if key_file.exists():
+        return base64.b64decode(key_file.read_text().strip())
+    key = AESGCM.generate_key(bit_length=256)
+    key_file.write_text(base64.b64encode(key).decode())
+    with contextlib.suppress(OSError):
+        os.chmod(str(key_file), 0o600)
+    return key
+
+
+def _encrypt_secret(plaintext: str, db_path: Path) -> str:
+    """使用 AES-256-GCM 加密密钥。返回 aes256gcm:<iv>:<ciphertext>:<tag> 格式。"""
+    key = _get_encryption_key(db_path)
+    aesgcm = AESGCM(key)
+    iv = os.urandom(12)
+    ciphertext_with_tag = aesgcm.encrypt(iv, plaintext.encode(), None)
+    ciphertext = ciphertext_with_tag[:-16]
+    tag = ciphertext_with_tag[-16:]
+    return f"aes256gcm:{base64.b64encode(iv).decode()}:{base64.b64encode(ciphertext).decode()}:{base64.b64encode(tag).decode()}"
+
+
+def _decrypt_secret(encrypted: str, db_path: Path) -> str:
+    """解密密钥。如果值不以 aes256gcm: 开头，则视为明文（向后兼容）。"""
+    if not encrypted.startswith("aes256gcm:"):
+        return encrypted
+    parts = encrypted.split(":")
+    if len(parts) != 4:
+        raise ValueError("Invalid encrypted secret format")
+    _, iv_b64, ct_b64, tag_b64 = parts
+    key = _get_encryption_key(db_path)
+    aesgcm = AESGCM(key)
+    iv = base64.b64decode(iv_b64)
+    ciphertext = base64.b64decode(ct_b64)
+    tag = base64.b64decode(tag_b64)
+    plaintext = aesgcm.decrypt(iv, ciphertext + tag, None)
+    return plaintext.decode()
+
+
+_ALLOWED_ADMIN_TABLES = frozenset({"admin_users", "admin_auth_tokens", "admin_keys", "admin_audit_logs"})
+
+
+def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
+    """Get column names for a whitelisted admin table."""
+    if table_name not in _ALLOWED_ADMIN_TABLES:
+        raise ValueError(f"Table '{table_name}' is not allowed for PRAGMA inspection")
+    return {str(row[1]) for row in connection.execute(f"PRAGMA table_info({_sql_identifier(table_name)})").fetchall()}
+
+
+def _admin_audit_needs_rebuild(connection: sqlite3.Connection) -> bool:
+    columns = _table_columns(connection, "admin_audit_logs")
+    if not columns:
+        return False
+    expected = {"id", "admin_user_id", "action", "object_type", "object_id", "detail", "created_at"}
+    if not expected.issubset(columns):
+        return True
+    foreign_keys = connection.execute(f"PRAGMA foreign_key_list({_sql_identifier('admin_audit_logs')})").fetchall()
+    return any(str(row[2]) == "users" for row in foreign_keys)
+
+
+def _column_expr(columns: set[str], *names: str, default: str = "''") -> str:
+    for name in names:
+        if name in columns:
+            return name
+    return default
+
+
+def _ensure_admin_audit_table(connection: sqlite3.Connection) -> None:
+    """Normalize admin audit storage so independent admins can write audit rows."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_user_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            object_type TEXT NOT NULL,
+            object_id TEXT NOT NULL DEFAULT '',
+            detail TEXT NOT NULL DEFAULT '',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    if _admin_audit_needs_rebuild(connection):
+        columns = _table_columns(connection, "admin_audit_logs")
+        id_expr = _column_expr(columns, "id", default="NULL")
+        admin_expr = _column_expr(columns, "admin_user_id", default="0")
+        action_expr = _column_expr(columns, "action")
+        object_type_expr = _column_expr(columns, "object_type", "target_type")
+        object_id_expr = _column_expr(columns, "object_id", "target_id")
+        detail_expr = _column_expr(columns, "detail", "detail_json", default="'{}'")
+        created_expr = _column_expr(columns, "created_at", default="CURRENT_TIMESTAMP")
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute("ALTER TABLE admin_audit_logs RENAME TO admin_audit_logs_old")
+        connection.execute(
+            """
+            CREATE TABLE admin_audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_user_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                object_type TEXT NOT NULL,
+                object_id TEXT NOT NULL DEFAULT '',
+                detail TEXT NOT NULL DEFAULT '',
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            INSERT INTO admin_audit_logs (id, admin_user_id, action, object_type, object_id, detail, created_at)
+            SELECT {id_expr}, {admin_expr}, {action_expr}, {object_type_expr}, {object_id_expr}, {detail_expr}, {created_expr}
+            FROM admin_audit_logs_old
+            """
+        )
+        connection.execute("DROP TABLE admin_audit_logs_old")
+        connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created
+        ON admin_audit_logs(created_at DESC, id DESC)
+        """
+    )
+
+
+def _ensure_admin_tables(db_path: Path) -> None:
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS admin_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                display_name TEXT NOT NULL DEFAULT '',
+                role TEXT NOT NULL DEFAULT 'operator',
+                status TEXT NOT NULL DEFAULT 'active',
+                last_login_at TEXT,
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {_ADMIN_TOKENS_TABLE} (
+                token TEXT PRIMARY KEY,
+                admin_user_id INTEGER NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (admin_user_id) REFERENCES admin_users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {_ADMIN_KEYS_TABLE} (
+                key_id TEXT PRIMARY KEY,
+                admin_user_id INTEGER NOT NULL,
+                secret_encrypted TEXT NOT NULL,
+                key_fingerprint TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                issued_at TEXT NOT NULL DEFAULT '',
+                last_used_at TEXT,
+                expires_at TEXT,
+                FOREIGN KEY (admin_user_id) REFERENCES admin_users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        _ensure_admin_audit_table(connection)
+        connection.commit()
+    # 惰性清理过期 Token
+    with contextlib.suppress(Exception):
+        _cleanup_expired_tokens(db_path)
+
+
+def _admin_keys_configured(db_path: Path) -> bool:
+    _ensure_admin_tables(db_path)
+    with sqlite3.connect(db_path) as connection:
+        count = connection.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM {_ADMIN_KEYS_TABLE}
+            WHERE status = 'active'
+              AND (expires_at IS NULL OR expires_at = '' OR expires_at > datetime('now'))
+            """
+        ).fetchone()[0]
+    return int(count or 0) > 0
+
+
+def _admin_hmac_message(timestamp: str, method: str, path: str) -> str:
+    return f"{timestamp}\n{method.upper()}\n{path}"
+
+
+def _verify_admin_hmac_signature(
+    db_path: Path,
+    *,
+    key_id: str,
+    timestamp: str,
+    signature: str,
+    method: str,
+    path: str,
+) -> dict[str, Any] | None:
+    _ensure_admin_tables(db_path)
+    if not key_id or not timestamp or not signature:
+        return None
+    try:
+        ts = int(timestamp)
+    except (TypeError, ValueError):
+        return None
+    if abs(time.time() * 1000 - ts) > _ADMIN_HMAC_WINDOW_MS:
+        return None
+
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            f"""
+            SELECT
+                k.key_id,
+                k.secret_encrypted,
+                k.status AS key_status,
+                k.expires_at,
+                a.id,
+                a.username,
+                a.display_name,
+                a.role,
+                a.status AS admin_status,
+                a.last_login_at
+            FROM {_ADMIN_KEYS_TABLE} AS k
+            JOIN admin_users AS a ON a.id = k.admin_user_id
+            WHERE k.key_id = ?
+            """,
+            (key_id,),
+        ).fetchone()
+        if not row:
+            return None
+        if str(row["key_status"]) != "active" or str(row["admin_status"]) != "active":
+            return None
+        expires_at = str(row["expires_at"] or "")
+        if expires_at:
+            expires = connection.execute("SELECT ? > datetime('now')", (expires_at,)).fetchone()[0]
+            if not int(expires or 0):
+                return None
+        message = _admin_hmac_message(timestamp, method, path)
+        secret = _decrypt_secret(str(row["secret_encrypted"]), db_path)
+        expected = hmac.new(
+            secret.encode("utf-8"),
+            message.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            return None
+        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        connection.execute(
+            f"UPDATE {_ADMIN_KEYS_TABLE} SET last_used_at = ? WHERE key_id = ?",
+            (now, key_id),
+        )
+        connection.commit()
+        return {
+            "id": row["id"],
+            "username": row["username"],
+            "display_name": row["display_name"],
+            "role": row["role"],
+            "status": row["admin_status"],
+            "last_login_at": row["last_login_at"],
+            "key_id": row["key_id"],
+        }
+
+
+def verify_admin_hmac_headers(db_path: Path, request: Request) -> None:
+    if not _admin_keys_configured(db_path):
+        raise HTTPException(status_code=503, detail="管理员密钥未配置，请先配置 HMAC 密钥")
+    signed_path = str(request.scope.get("lingshu.original_path") or request.url.path)
+    verified = _verify_admin_hmac_signature(
+        db_path,
+        key_id=request.headers.get("X-Client-KeyId", ""),
+        timestamp=request.headers.get("X-Client-Ts", ""),
+        signature=request.headers.get("X-Client-Sig", ""),
+        method=request.method,
+        path=signed_path,
+    )
+    if not verified:
+        raise HTTPException(status_code=403, detail="管理密钥签名无效或已过期")
+
+
+def _get_admin_by_token(db_path: Path, token: str) -> dict[str, Any] | None:
+    _ensure_admin_tables(db_path)
+    token_hash = _admin_token_hash(token)
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            f"""
+            SELECT a.id, a.username, a.display_name, a.role, a.status, a.last_login_at
+            FROM {_ADMIN_TOKENS_TABLE} AS t
+            JOIN admin_users AS a ON a.id = t.admin_user_id
+            WHERE t.token = ?
+              AND t.expires_at > datetime('now')
+              AND a.status = 'active'
+            """,
+            (token_hash,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def require_admin_user(
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+) -> dict[str, Any]:
+    token = _bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="未登录")
+    db_path = _get_db_path(store)
+    # 双因子验证：HMAC 签名 + Bearer Token
+    verify_admin_hmac_headers(db_path, request)
+    admin = _get_admin_by_token(db_path, token)
+    if not admin:
+        raise HTTPException(status_code=401, detail="管理员登录已过期或无效")
+    return admin
+
+
+@router.post("/login")
+@limiter.limit("5/minute")
+async def admin_login(request: Request, payload: AdminLoginPayload, store: BookstoreStore = Depends(get_store)) -> dict[str, Any]:
+    username = payload.username.strip()
+    password = payload.password
+
+    db_path = _get_db_path(store)
+    _ensure_admin_tables(db_path)
+    if not _admin_keys_configured(db_path):
+        raise HTTPException(status_code=503, detail="管理员密钥未配置，请先配置 HMAC 密钥")
+    key_info = _verify_admin_hmac_signature(
+        db_path,
+        key_id=payload.key_id,
+        timestamp=payload.timestamp,
+        signature=payload.hmac_signature,
+        method=request.method,
+        path=str(request.scope.get("lingshu.original_path") or request.url.path),
+    )
+    if not key_info:
+        raise HTTPException(status_code=403, detail="密钥验证失败，请检查密钥文件是否有效")
+    if str(key_info.get("username") or "") != username:
+        raise HTTPException(status_code=403, detail="密钥与管理员账号不匹配")
+
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            """
+            SELECT id, username, password_hash, display_name, role, status
+            FROM admin_users
+            WHERE username = ?
+            """,
+            (username,),
+        ).fetchone()
+
+    if not row or not bcrypt.checkpw(password.encode("utf-8"), str(row["password_hash"]).encode("utf-8")):
+        raise HTTPException(status_code=401, detail="管理员用户名或密码错误")
+    if str(row["status"]) != "active":
+        raise HTTPException(status_code=403, detail="管理员账号已停用")
+
+    token = secrets.token_hex(32)
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    expires_at = (datetime.now(UTC) + timedelta(hours=_ADMIN_TOKEN_TTL_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            f"""
+            INSERT INTO {_ADMIN_TOKENS_TABLE} (token, admin_user_id, expires_at, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (_admin_token_hash(token), int(row["id"]), expires_at, now),
+        )
+        connection.execute(
+            """
+            UPDATE admin_users
+            SET last_login_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, int(row["id"])),
+        )
+        connection.commit()
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "admin": {
+            "id": row["id"],
+            "username": row["username"],
+            "display_name": row["display_name"],
+            "role": row["role"],
+            "status": row["status"],
+        },
+    }
+
+
+@router.get("/me")
+async def admin_me(admin: dict[str, Any] = Depends(require_admin_user)) -> dict[str, Any]:
+    return admin
+
+
+@router.post("/logout")
+async def admin_logout(
+    request: Request,
+    authorization: str = Header(default=""),
+    store: BookstoreStore = Depends(get_store),
+) -> dict[str, bool]:
+    db_path = _get_db_path(store)
+    # 双因子验证：HMAC 签名 + Bearer Token
+    verify_admin_hmac_headers(db_path, request)
+    token = _bearer_token(authorization)
+    if token:
+        _ensure_admin_tables(db_path)
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(f"DELETE FROM {_ADMIN_TOKENS_TABLE} WHERE token = ?", (_admin_token_hash(token),))
+            connection.commit()
+    return {"ok": True}
+
+
+===== File: lingshu_api/routers/analysis_v3.py =====
+
+"""analysis_v3 路由垫片文件 — 重导出拆分后的三个子模块路由。
+
+原 1410 行的单文件已拆分为：
+  - analysis_v3_runs.py  — 分析运行管理（创建/查询/取消运行）
+  - analysis_v3_steps.py — 分析步骤执行（实体提及/共指/原子事实等）
+  - analysis_v3_cards.py — 卡片操作（查询/写回/批量写回）
+
+本文件保留 router 属性以兼容 main.py 中的路由注册。
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter
+
+from lingshu_api.routers.analysis_v3_cards import router as cards_router
+from lingshu_api.routers.analysis_v3_runs import router as runs_router
+from lingshu_api.routers.analysis_v3_steps import router as steps_router
+
+# 合并三个子路由为统一 router，保持与 main.py 中 analysis_v3.router 的兼容
+router = APIRouter(tags=["analysis-v3"])
+router.include_router(runs_router)
+router.include_router(steps_router)
+router.include_router(cards_router)
+
+# 重导出子模块的公共函数，供外部引用（如 analysis_v3_ws.py）
+from lingshu_api.routers.analysis_v3_runs import (  # noqa: E402, F401
+    _analysis_v3_run_item,
+    _check_run_book_owner,
+    _check_run_book_owner_for_book,
+    _create_required_analysis_ai_provider,
+    _get_analysis_v3_run_or_404,
+    _is_analysis_v3_run,
+    _load_chapters_for_analysis,
+    _sanitize_error_text,
+)
+from lingshu_api.routers.analysis_v3_steps import (  # noqa: E402, F401
+    _analysis_v3_backtrack_task_item,
+    _analysis_v3_event_item,
+    _count_by,
+    _count_rows_by,
+    _row_value,
+    get_analysis_v3_review_summary,
+)
+from lingshu_api.routers.analysis_v3_cards import (  # noqa: E402, F401
+    _analysis_v3_card_item,
+    _analysis_v3_dependency_item,
+    _create_writeback_card_generator,
+)
+
+
+===== File: lingshu_api/routers/analysis_v3_cards.py =====
+
+"""analysis_v3 卡片操作路由 — 查询/写回/批量写回。"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+from lingshu_api.dependencies import require_login
+from lingshu_api.routers.analysis_v3_runs import (
+    _analysis_v3_run_item,
+    _check_run_book_owner,
+    _create_required_analysis_ai_provider,
+    _get_analysis_v3_run_or_404,
+    _sanitize_error_text,
+)
+from lingshu_api.routers.analysis_v3_steps import _row_value, get_analysis_v3_review_summary
+from lingshu_api.schemas.analysis_v3 import CardApplyRequest, WritebackRunRequest
+from lingshu_api.services.db_bridge import WorkspaceDB, get_workspace_db
+from novel_app.analysis.store import AnalysisStore
+from novel_app.json_utils import extract_json_array, extract_json_object
+
+router = APIRouter(prefix="/api/workspace", tags=["analysis-v3-cards"])
+_cloud_logger = logging.getLogger(__name__)
+limiter = Limiter(key_func=get_remote_address)
+
+
+def _create_writeback_card_generator(db: WorkspaceDB):
+    """尝试创建写回卡片生成器，AI 不可用时返回 None 允许降级。"""
+    try:
+        from novel_app.analysis.writeback_card_generator import WritebackCardGenerator
+        return WritebackCardGenerator(_create_required_analysis_ai_provider(db, purpose="V3 写回卡片生成"))
+    except Exception as exc:
+        _cloud_logger.warning("写回卡片生成器不可用，将跳过 LLM 精炼: %s", exc)
+        return None
+
+
+def _analysis_v3_dependency_item(row: Any) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "card_uid": str(row["card_uid"] or ""),
+        "dependency_type": str(row["dependency_type"] or ""),
+        "dependency_uid": str(row["dependency_uid"] or ""),
+        "dependency_hash": str(row["dependency_hash"] or ""),
+        "created_at": str(row["created_at"] or ""),
+    }
+
+
+def _analysis_v3_card_item(store: AnalysisStore, book_id: int, row: Any) -> dict[str, Any]:
+    card_uid = str(row["card_uid"] or "")
+    dependencies = store.list_card_dependencies(book_id, run_id=int(row["run_id"]), card_uid=card_uid)
+    return {
+        "id": int(row["id"]),
+        "book_id": int(row["book_id"]),
+        "run_id": int(row["run_id"]),
+        "card_uid": card_uid,
+        "card_type": str(row["card_type"] or ""),
+        "entity_uid": str(row["entity_uid"] or ""),
+        "ars_score": float(row["ars_score"] or 0.0),
+        "status": str(row["status"] or ""),
+        "payload": extract_json_object(str(row["payload_json"] or "{}")),
+        "diff": extract_json_object(str(row["diff_json"] or "{}")),
+        "dependencies": [
+            _analysis_v3_dependency_item(dependency)
+            for dependency in dependencies
+        ],
+        "created_at": str(row["created_at"] or ""),
+        "updated_at": str(row["updated_at"] or ""),
+        "applied_at": str(row["applied_at"] or ""),
+    }
+
+
+# ------------------------------------------------------------------
+# 卡片依赖查询
+# ------------------------------------------------------------------
+
+@router.get("/analysis-v3/runs/{run_id}/cards/{card_uid}/dependencies")
+async def list_analysis_v3_card_dependencies(
+    run_id: int,
+    card_uid: str,
+    user: dict = Depends(require_login),
+    db: WorkspaceDB = Depends(get_workspace_db),
+):
+    await _check_run_book_owner(db, run_id, user)
+    run = await _get_analysis_v3_run_or_404(db, run_id)
+    store = AnalysisStore(db.db)
+    book_id = int(run["book_id"])
+    dependencies = await asyncio.to_thread(store.list_card_dependencies, book_id, run_id=run_id, card_uid=card_uid)
+    return {
+        "run": _analysis_v3_run_item(run),
+        "items": [_analysis_v3_dependency_item(row) for row in dependencies],
+    }
+
+
+# ------------------------------------------------------------------
+# 卡片列表
+# ------------------------------------------------------------------
+
+@router.get("/analysis-v3/runs/{run_id}/cards")
+async def list_analysis_v3_cards(
+    run_id: int,
+    user: dict = Depends(require_login),
+    db: WorkspaceDB = Depends(get_workspace_db),
+):
+    await _check_run_book_owner(db, run_id, user)
+    run = await _get_analysis_v3_run_or_404(db, run_id)
+    store = AnalysisStore(db.db)
+    cards_raw = await asyncio.to_thread(store.list_cards, run_id)
+    cards = [
+        row
+        for row in cards_raw
+        if str(row["card_type"] or "").startswith("v3_")
+    ]
+    return {
+        "run": _analysis_v3_run_item(run),
+        "items": [await asyncio.to_thread(_analysis_v3_card_item, store, int(run["book_id"]), row) for row in cards],
+    }
+
+
+# ------------------------------------------------------------------
+# 单卡写回（apply — Phase 11 门禁占位）
+# ------------------------------------------------------------------
+
+@router.post("/analysis-v3/runs/{run_id}/cards/{card_uid}/apply")
+async def apply_analysis_v3_card(
+    run_id: int,
+    card_uid: str,
+    payload: CardApplyRequest | None = None,
+    user: dict = Depends(require_login),
+    db: WorkspaceDB = Depends(get_workspace_db),
+):
+    """正式写回门禁 — Phase 11。
+
+    将候选卡片的变更写入正式层。当前为门禁占位，始终拒绝。
+    """
+    await _check_run_book_owner(db, run_id, user)
+    run = await _get_analysis_v3_run_or_404(db, run_id)
+    store = AnalysisStore(db.db)
+    book_id = int(run["book_id"])
+    cards_raw = await asyncio.to_thread(store.list_cards, run_id)
+    cards = [row for row in cards_raw if str(row["card_uid"] or "") == card_uid]
+    if not cards:
+        raise HTTPException(status_code=404, detail="卡片不存在")
+    card = cards[0]
+    card_status = str(card["status"] or "")
+    if card_status == "applied":
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": "卡片已写回，不可重复操作"})
+    if card_status == "superseded":
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": "已被取代的卡片不能写回"})
+    review = await get_analysis_v3_review_summary(run_id, user=user, db=db)
+    review_item = review.get("item", {})
+    if not review_item.get("formal_writeback_allowed"):
+        blockers = review_item.get("blockers", [])
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "CONFLICT", "message": f"写回门禁未通过: {', '.join(blockers) if blockers else '运行状态未就绪'}"},
+        )
+    actor = payload.actor if payload is not None else "user"
+    run_meta = {}
+    try:
+        run_meta = json.loads(str(run["meta_json"] or "{}"))
+    except Exception:
+        pass
+    ai_invoked = bool(run_meta.get("ai_invoked") or run_meta.get("ai_stages"))
+    writeback_generator = _create_writeback_card_generator(db)
+    require_wb_gen = bool(ai_invoked)
+    result = await asyncio.to_thread(
+        store.apply_card,
+        book_id,
+        run_id,
+        card_uid,
+        actor=actor,
+        writeback_generator=writeback_generator,
+        require_writeback_generator=require_wb_gen,
+    )
+    if not result or str(_row_value(result, "status") or "") != "applied":
+        raise HTTPException(status_code=500, detail="写回执行失败")
+    refreshed = await asyncio.to_thread(store.get_run, run_id)
+    applied_payload = extract_json_object(str(_row_value(result, "payload_json") or "{}"))
+    return {
+        "ok": True,
+        "run": _analysis_v3_run_item(refreshed),
+        "card_uid": card_uid,
+        "applied_table": _row_value(result, "applied_table"),
+        "applied_id": _row_value(result, "applied_id"),
+        "writeback_generation_used": bool((applied_payload.get("writeback_generation") or {}).get("used")),
+    }
+
+
+# ------------------------------------------------------------------
+# 单卡写回（writeback）
+# ------------------------------------------------------------------
+
+@limiter.limit("10/minute")
+@router.post("/analysis-v3/runs/{run_id}/cards/{card_uid}/writeback")
+async def writeback_analysis_v3_card(
+    request: Request,
+    run_id: int,
+    card_uid: str,
+    payload: CardApplyRequest | None = None,
+    user: dict = Depends(require_login),
+    db: WorkspaceDB = Depends(get_workspace_db),
+):
+    """将单张 V3 分析卡片写回到业务表。"""
+    await _check_run_book_owner(db, run_id, user)
+    run = await _get_analysis_v3_run_or_404(db, run_id)
+    book_id = int(run["book_id"])
+
+    review = await get_analysis_v3_review_summary(run_id, user=user, db=db, for_single_card=True)
+    if not review.get("item", {}).get("formal_writeback_allowed"):
+        blockers = review.get("item", {}).get("blockers", [])
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "CONFLICT", "message": f"写回门禁未通过: {', '.join(blockers) if blockers else '未知原因'}"},
+        )
+
+    store = AnalysisStore(db.db)
+    cards_raw = await asyncio.to_thread(store.list_cards, run_id)
+    cards = [row for row in cards_raw if str(_row_value(row, "card_uid") or "") == card_uid]
+    if not cards:
+        raise HTTPException(status_code=404, detail="卡片不存在")
+
+    card = cards[0]
+    card_status = str(_row_value(card, "status") or "")
+    if card_status == "applied":
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": "卡片已写回，不可重复操作"})
+    if card_status == "superseded":
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": "已被取代的卡片不能写回"})
+
+    actor = payload.actor if payload is not None else "user"
+    run_meta = {}
+    try:
+        run_meta = json.loads(str(run["meta_json"] or "{}"))
+    except Exception:
+        pass
+    ai_invoked = bool(run_meta.get("ai_invoked") or run_meta.get("ai_stages"))
+    writeback_generator = _create_writeback_card_generator(db)
+    require_wb_gen = bool(ai_invoked)
+    result = await asyncio.to_thread(
+        store.apply_card,
+        book_id,
+        run_id,
+        card_uid,
+        actor=actor,
+        writeback_generator=writeback_generator,
+        require_writeback_generator=require_wb_gen,
+    )
+    if not result or str(_row_value(result, "status") or "") != "applied":
+        raise HTTPException(status_code=500, detail="写回执行失败")
+
+    refreshed = await asyncio.to_thread(store.get_run, run_id)
+    applied_payload = extract_json_object(str(_row_value(result, "payload_json") or "{}"))
+    applied_table = _row_value(result, "applied_table")
+    applied_id = _row_value(result, "applied_id")
+
+    try:
+        from novel_app.core.event_bus import get_event_bus
+        get_event_bus().publish(
+            "writeback_completed",
+            book_id=book_id,
+            run_id=run_id,
+            card_uid=card_uid,
+            applied_table=applied_table,
+            applied_id=applied_id,
+            actor=actor,
+        )
+    except Exception:
+        _cloud_logger.warning("发布 writeback_completed 事件失败", exc_info=True)
+
+    try:
+        from lingshu_api.ws.connection import get_ws_manager
+        manager = get_ws_manager()
+        await manager.broadcast({
+            "type": "analysis_v3.writeback_completed",
+            "payload": {
+                "book_id": book_id,
+                "run_id": run_id,
+                "card_uid": card_uid,
+                "applied_table": applied_table,
+                "applied_id": applied_id,
+            },
+        })
+    except Exception:
+        _cloud_logger.warning("广播 writeback_completed WebSocket 消息失败", exc_info=True)
+
+    return {
+        "ok": True,
+        "run": _analysis_v3_run_item(refreshed),
+        "card_uid": card_uid,
+        "applied_table": applied_table,
+        "applied_id": applied_id,
+        "writeback_generation_used": bool((applied_payload.get("writeback_generation") or {}).get("used")),
+    }
+
+
+# ------------------------------------------------------------------
+# 批量写回
+# ------------------------------------------------------------------
+
+@limiter.limit("3/minute")
+@router.post("/analysis-v3/runs/{run_id}/writeback")
+async def writeback_analysis_v3_run(
+    request: Request,
+    run_id: int,
+    payload: WritebackRunRequest | None = None,
+    user: dict = Depends(require_login),
+    db: WorkspaceDB = Depends(get_workspace_db),
+):
+    """批量写回 V3 分析运行中所有通过门禁的卡片。"""
+    await _check_run_book_owner(db, run_id, user)
+    run = await _get_analysis_v3_run_or_404(db, run_id)
+    book_id = int(run["book_id"])
+
+    review = await get_analysis_v3_review_summary(run_id, user=user, db=db)
+    if not review.get("item", {}).get("formal_writeback_allowed"):
+        blockers = review.get("item", {}).get("blockers", [])
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "CONFLICT", "message": f"写回门禁未通过: {', '.join(blockers) if blockers else '未知原因'}"},
+        )
+
+    store = AnalysisStore(db.db)
+    cards = await asyncio.to_thread(store.list_cards, run_id)
+
+    writebackable = []
+    for card in cards:
+        card_status = str(_row_value(card, "status") or "")
+        payload_json = extract_json_object(str(_row_value(card, "payload_json") or "{}"))
+        if card_status in ("draft", "reviewed") and payload_json.get("writeback_target") and isinstance(payload_json.get("writeback_fields"), dict):
+            writebackable.append(card)
+
+    if not writebackable:
+        return {"ok": True, "writeback_count": 0, "message": "无可写回的卡片"}
+
+    run_meta = {}
+    try:
+        run_meta = json.loads(str(run["meta_json"] or "{}"))
+    except Exception:
+        pass
+    ai_invoked = bool(run_meta.get("ai_invoked") or run_meta.get("ai_stages"))
+    writeback_generator = _create_writeback_card_generator(db)
+    require_wb_gen = bool(ai_invoked)
+    results = []
+    for card in writebackable:
+        card_uid = str(_row_value(card, "card_uid") or "")
+        actor = payload.actor if payload is not None else "user"
+        try:
+            result = await asyncio.to_thread(
+                store.apply_card,
+                book_id,
+                run_id,
+                card_uid,
+                actor=actor,
+                writeback_generator=writeback_generator,
+                require_writeback_generator=require_wb_gen,
+            )
+            success = result is not None and str(_row_value(result, "status") or "") == "applied"
+            applied_payload = extract_json_object(str(_row_value(result, "payload_json") or "{}")) if result is not None else {}
+            result_entry = {
+                "card_uid": card_uid,
+                "success": success,
+                "applied_table": _row_value(result, "applied_table") if result is not None else None,
+                "applied_id": _row_value(result, "applied_id") if result is not None else None,
+                "writeback_generation_used": bool((applied_payload.get("writeback_generation") or {}).get("used")),
+            }
+            if not success:
+                result_entry["error"] = "写回执行失败：卡片状态未变为 applied"
+        except Exception as exc:
+            _cloud_logger.warning("批量写回卡片 %s 异常: %s", card_uid, exc)
+            result_entry = {
+                "card_uid": card_uid,
+                "success": False,
+                "applied_table": None,
+                "applied_id": None,
+                "writeback_generation_used": False,
+                "error": str(exc),
+            }
+        results.append(result_entry)
+
+    refreshed = await asyncio.to_thread(store.get_run, run_id)
+    success_count = sum(1 for r in results if r["success"])
+    failure_count = len(results) - success_count
+
+    if success_count > 0:
+        try:
+            from novel_app.core.event_bus import get_event_bus
+            get_event_bus().publish(
+                "writeback_completed",
+                book_id=book_id,
+                run_id=run_id,
+                batch=True,
+                success_count=success_count,
+                actor=payload.actor if payload is not None else "user",
+            )
+        except Exception:
+            _cloud_logger.warning("发布 writeback_completed 批量事件失败", exc_info=True)
+
+        try:
+            from lingshu_api.ws.connection import get_ws_manager
+            manager = get_ws_manager()
+            await manager.broadcast({
+                "type": "analysis_v3.writeback_completed",
+                "payload": {
+                    "book_id": book_id,
+                    "run_id": run_id,
+                    "batch": True,
+                    "success_count": success_count,
+                },
+            })
+        except Exception:
+            _cloud_logger.warning("批量写回 WebSocket 广播失败", exc_info=True)
+
+    from fastapi.responses import JSONResponse
+
+    response_body = {
+        "ok": True,
+        "run": _analysis_v3_run_item(refreshed),
+        "writeback_count": len(results),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "results": results,
+    }
+
+    if failure_count > 0 and success_count > 0:
+        return JSONResponse(status_code=207, content=response_body)
+    if failure_count > 0 and success_count == 0:
+        response_body["ok"] = False
+        return JSONResponse(status_code=500, content=response_body)
+
+    return response_body
+
+
+============================================================
+                  （中间部分已省略）
+============================================================
+
+
+============================================================
+                      源代码（后 30 页）
+============================================================
+
+
+
+===== File: electron/preload.js =====
+
+const { contextBridge, ipcRenderer } = require('electron');
+
+const backendPort = process.env.LINGSHU_BACKEND_PORT || '8787';
+const backendHost = process.env.LINGSHU_BACKEND_HOST || '127.0.0.1';
+const cloudBaseUrl = process.env.LINGSHU_CLOUD_BASE_URL || 'https://www.ling-shu.top';
+const localBaseUrl = (process.env.LINGSHU_LOCAL_BASE_URL || `http://${backendHost}:${backendPort}`).replace(/\/+$/, '');
+const cloudWsBaseUrl = process.env.LINGSHU_CLOUD_WS_BASE_URL || cloudBaseUrl.replace(/^http/, 'ws').replace(/\/+$/, '') + '/ws';
+
+/**
+ * 灵枢 preload 脚本 — 暴露安全 API 到渲染进程
+ * 对应 Qt: secure_storage.py (DPAPI) + QFileDialog (文件访问)
+ */
+contextBridge.exposeInMainWorld('lingshu', {
+  apiBaseUrl: process.env.LINGSHU_API_BASE_URL || `${localBaseUrl}/api`,
+  wsBaseUrl: process.env.LINGSHU_WS_BASE_URL || `${localBaseUrl.replace(/^http/, 'ws')}/ws`,
+  cloudBaseUrl,
+  cloudApiBaseUrl: `${cloudBaseUrl.replace(/\/+$/, '')}/api`,
+  cloudWsBaseUrl,
+
+  // 密钥安全存储 (对应 secure_storage.py DPAPI)
+  protectSecret: (secret) => ipcRenderer.invoke('secure:protect', secret),
+  unprotectSecret: (encrypted) => ipcRenderer.invoke('secure:unprotect', encrypted),
+
+  // 文件系统
+  openFileDialog: (options) => ipcRenderer.invoke('dialog:openFile', options),
+  readFile: (filePath) => ipcRenderer.invoke('fs:readFile', filePath),
+  writeFile: (filePath, content) => ipcRenderer.invoke('fs:writeFile', filePath, content),
+  statFile: (filePath) => ipcRenderer.invoke('fs:stat', filePath),
+
+  // 应用信息
+  getPath: (name) => ipcRenderer.invoke('app:getPath', name),
+  onOpenSearch: (callback) => {
+    const handler = () => {
+      if (typeof callback === 'function') callback();
+    };
+    ipcRenderer.on('app:open-search', handler);
+    return () => ipcRenderer.removeListener('app:open-search', handler);
+  },
+  platform: process.platform,
+  isElectron: true,
+});
+
+
+===== File: electron/shared/electron-common.js =====
+
+// ============================================================
+//  灵枢 / 灵镜 共享 Electron 主进程工具
+//  — writeMainLog、isPathAllowed、safeStorage IPC、文件 IPC
+// ============================================================
+
+const { app, ipcMain, safeStorage } = require('electron');
+const path = require('path');
+const fs = require('fs');
+
+// ------------------------------------------------------------------
+//  日志
+// ------------------------------------------------------------------
+
+function writeMainLog(level, message, extra = '') {
+  const line = `[${new Date().toISOString()}] [${level}] ${message}${extra ? ` ${extra}` : ''}\n`;
+  try {
+    const logDir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, 'main.log'), line, 'utf-8');
+  } catch (_err) {
+    // File logging must never block app startup.
+  }
+  const writer = level === 'ERROR' ? console.error : console.log;
+  writer(line.trimEnd());
+}
+
+// ------------------------------------------------------------------
+//  路径白名单校验：只允许访问 userData 目录
+//  使用 realpathSync 解析符号链接，防止通过符号链接绕过白名单
+// ------------------------------------------------------------------
+
+function isPathAllowed(filePath) {
+  const userDataPath = app.getPath('userData');
+  let resolved;
+  try {
+    resolved = fs.realpathSync(path.resolve(filePath));
+  } catch (_err) {
+    // 文件不存在时无法解析符号链接，使用 resolve 结果
+    resolved = path.resolve(filePath);
+  }
+  let realUserDataPath;
+  try {
+    realUserDataPath = fs.realpathSync(userDataPath);
+  } catch (_err) {
+    realUserDataPath = userDataPath;
+  }
+  return resolved.startsWith(realUserDataPath + path.sep) || resolved === realUserDataPath;
+}
+
+// ------------------------------------------------------------------
+//  密钥安全存储 IPC（secure:protect / secure:unprotect）
+// ------------------------------------------------------------------
+
+function registerSafeStorageHandlers() {
+  ipcMain.handle('secure:protect', (_event, secret) => {
+    try {
+      if (safeStorage.isEncryptionAvailable()) {
+        const encrypted = safeStorage.encryptString(secret);
+        return encrypted.toString('base64');
+      }
+      throw new Error('Electron safeStorage is unavailable; refusing to store secrets without encryption');
+    } catch (err) {
+      console.error('secure:protect error:', err);
+      throw err;
+    }
+  });
+
+  ipcMain.handle('secure:unprotect', (_event, encryptedBase64) => {
+    try {
+      if (safeStorage.isEncryptionAvailable()) {
+        const buf = Buffer.from(encryptedBase64, 'base64');
+        return safeStorage.decryptString(buf);
+      }
+      throw new Error('Electron safeStorage is unavailable; refusing to read secrets without encryption');
+    } catch (err) {
+      console.error('secure:unprotect error:', err);
+      throw err;
+    }
+  });
+}
+
+// ------------------------------------------------------------------
+//  文件读写 IPC（fs:readFile / fs:writeFile / fs:stat）
+//  含大小限制与路径白名单校验
+// ------------------------------------------------------------------
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+function registerFileIpcHandlers() {
+  ipcMain.handle('fs:readFile', async (_event, filePath) => {
+    if (typeof filePath !== 'string' || !filePath) {
+      throw new Error('Invalid argument: filePath must be a non-empty string');
+    }
+    if (!isPathAllowed(filePath)) {
+      throw new Error('Access denied: path outside allowed directory');
+    }
+    const stat = await fs.promises.stat(filePath);
+    if (stat.size > MAX_FILE_SIZE) {
+      throw new Error(`File too large: ${stat.size} bytes (max ${MAX_FILE_SIZE} bytes)`);
+    }
+    return await fs.promises.readFile(filePath, 'utf-8');
+  });
+
+  ipcMain.handle('fs:writeFile', async (_event, filePath, content) => {
+    if (typeof filePath !== 'string' || !filePath) {
+      throw new Error('Invalid argument: filePath must be a non-empty string');
+    }
+    if (typeof content !== 'string') {
+      throw new Error('Invalid argument: content must be a string');
+    }
+    if (!isPathAllowed(filePath)) {
+      throw new Error('Access denied: path outside allowed directory');
+    }
+    if (content.length > MAX_FILE_SIZE) {
+      throw new Error(`Content too large: ${content.length} bytes (max ${MAX_FILE_SIZE} bytes)`);
+    }
+    await fs.promises.writeFile(filePath, content, 'utf-8');
+    return true;
+  });
+
+  ipcMain.handle('fs:stat', async (_event, filePath) => {
+    if (typeof filePath !== 'string' || !filePath) {
+      throw new Error('Invalid argument: filePath must be a non-empty string');
+    }
+    if (!isPathAllowed(filePath)) {
+      throw new Error('Access denied: path outside allowed directory');
+    }
+    const stat = await fs.promises.stat(filePath);
+    return {
+      size: stat.size,
+      mtime: stat.mtime.getTime(),
+      isFile: stat.isFile(),
+      isDirectory: stat.isDirectory(),
+    };
+  });
+}
+
+// ------------------------------------------------------------------
+//  导出
+// ------------------------------------------------------------------
+
+module.exports = {
+  writeMainLog,
+  isPathAllowed,
+  registerSafeStorageHandlers,
+  registerFileIpcHandlers,
+  MAX_FILE_SIZE,
+};
+
+
+===== File: lingshu-app/src/composables/useAutoSave.js =====
+
+/**
+ * 自动保存 composable — 防抖保存 + 脏状态追踪
+ *
+ * 对应 Qt 模块: app_editor.py → _on_editor_changed / word_timer
+ */
+import { ref, onUnmounted } from 'vue';
+
+export function useAutoSave(saveFn, options = {}) {
+  const { interval = 3000, enabled = true } = options;
+
+  const dirty = ref(false);
+  const saving = ref(false);
+  const lastSaved = ref(null);
+  let timer = null;
+
+  function markDirty() {
+    dirty.value = true;
+  }
+
+  function markClean() {
+    dirty.value = false;
+    lastSaved.value = new Date();
+  }
+
+  async function save() {
+    if (!dirty.value || saving.value) return;
+    saving.value = true;
+    try {
+      await saveFn();
+      markClean();
+    } finally {
+      saving.value = false;
+    }
+  }
+
+  // 防抖自动保存
+  function scheduleAutoSave() {
+    if (!enabled || !dirty.value) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => save(), interval);
+  }
+
+  // 关闭时停止
+  onUnmounted(() => {
+    clearTimeout(timer);
+  });
+
+  return { dirty, saving, lastSaved, markDirty, markClean, save, scheduleAutoSave };
+}
+
+
+/**
+ * 字数统计 composable
+ *
+ * 对应 Qt 模块: app_editor.py → _update_word_count / count_text_characters
+ */
+import { computed } from 'vue';
+
+export function useWordCount(textRef) {
+  const wordCount = computed(() => {
+    const text = textRef.value || '';
+    return text.replace(/\s/g, '').length;
+  });
+
+  return { wordCount };
+}
+
+
+===== File: lingshu-app/src/composables/useEventBus.js =====
+
+const listeners = new Map()
+
+export function useEventBus() {
+  function on(event, callback) {
+    if (!listeners.has(event)) {
+      listeners.set(event, new Set())
+    }
+    listeners.get(event).add(callback)
+  }
+
+  function off(event, callback) {
+    if (listeners.has(event)) {
+      listeners.get(event).delete(callback)
+    }
+  }
+
+  function emit(event, payload) {
+    if (listeners.has(event)) {
+      listeners.get(event).forEach(cb => cb(payload))
+    }
+  }
+
+  return { on, off, emit }
+}
+
+
+===== File: lingshu-app/src/main.js =====
+
+import { createApp } from 'vue';
+import { createPinia } from 'pinia';
+import 'element-plus/dist/index.css';
+import 'splitpanes/dist/splitpanes.css';
+import './styles.css';
+import App from './App.vue';
+import { router } from './router';
+
+const app = createApp(App);
+app.use(createPinia());
+app.use(router);
+app.mount('#app');
+
+
+===== File: lingshu-app/src/router.js =====
+
+import { createRouter, createWebHistory } from 'vue-router';
+import AppLayout from './components/layout/AppLayout.vue';
+
+const routes = [
+  {
+    path: '/settings/:section?',
+    name: 'settings',
+    component: () => import('./components/settings/SettingsView.vue'),
+  },
+  {
+    path: '/',
+    component: AppLayout,
+    children: [
+      {
+        path: '',
+        redirect: '/workspace',
+      },
+      {
+        path: 'workspace',
+        name: 'workspace-entry',
+        component: () => import('./components/workspace/WorkspaceLayout.vue'),
+      },
+      {
+        path: 'workspace/books/:bookId',
+        name: 'workspace-book',
+        component: () => import('./components/workspace/WorkspaceLayout.vue'),
+      },
+      {
+        path: 'workspace/books/:bookId/volumes/:volumeId',
+        name: 'workspace-volume',
+        component: () => import('./components/workspace/WorkspaceLayout.vue'),
+      },
+      {
+        path: 'workspace/books/:bookId/volumes/:volumeId/chapters/:chapterId',
+        name: 'workspace-chapter',
+        component: () => import('./components/workspace/WorkspaceLayout.vue'),
+      },
+      {
+        path: 'workspace/books/:bookId/settings',
+        name: 'workspace-book-settings',
+        redirect: to => ({
+          path: '/settings/general',
+          query: { bookId: to.params.bookId },
+        }),
+      },
+      {
+        path: 'workspace/books/:bookId/chat',
+        name: 'workspace-chat',
+        component: () => import('./components/workspace/WorkspaceLayout.vue'),
+      },
+      {
+        path: 'workspace/books/:bookId/reference',
+        name: 'workspace-reference',
+        component: () => import('./components/workspace/WorkspaceLayout.vue'),
+      },
+      {
+        path: 'workspace/books/:bookId/star-graph',
+        name: 'workspace-star-graph',
+        component: () => import('./components/workspace/WorkspaceLayout.vue'),
+      },
+      {
+        path: 'workspace/import',
+        name: 'workspace-import',
+        component: () => import('./components/workspace/WorkspaceLayout.vue'),
+      },
+      {
+        path: 'workspace/settings',
+        name: 'workspace-settings',
+        redirect: '/settings',
+      },
+    ],
+  },
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/workspace',
+  },
+];
+
+export const router = createRouter({
+  history: createWebHistory(),
+  routes,
+  scrollBehavior() {
+    return { top: 0 };
+  },
+});
+
+router.afterEach((to) => {
+  if (to.path.startsWith('/workspace') && to.path !== '/workspace/settings') {
+    localStorage.setItem('lingshu_last_workspace_path', to.fullPath);
+  }
+});
+
+
+===== File: lingshu-app/src/stores/auth.js =====
+
+/**
+ * 认证 Store — 用户登录状态管理
+ */
+import { defineStore } from 'pinia';
+import { ref, computed } from 'vue';
+import api, { getAuthToken, setAuthToken } from '../utils/api';
+import { useCloudStore } from './cloud';
+import { useEventBus } from '../composables/useEventBus';
+
+export const useAuthStore = defineStore('auth', () => {
+  const token = ref(getAuthToken());
+  const user = ref(null);
+  const initialized = ref(false);
+  const loading = ref(false);
+  const error = ref('');
+
+  const isLoggedIn = computed(() => !!token.value);
+  const isAuthor = computed(() => user.value?.is_author === 1);
+
+  async function login(username, password) {
+    return runAuthRequest(async () => {
+      const { data } = await api.post('/auth/login', { username, password });
+      applySession(data);
+      triggerCloudSync();
+      return data;
+    });
+  }
+
+  async function register(username, password, isAuthor = 1) {
+    return runAuthRequest(async () => {
+      const { data } = await api.post('/auth/register', { username, password, is_author: isAuthor });
+      applySession(data);
+      triggerCloudSync();
+      return data;
+    });
+  }
+
+  async function fetchMe() {
+    if (!token.value) {
+      initialized.value = true;
+      return null;
+    }
+    loading.value = true;
+    error.value = '';
+    try {
+      const { data } = await api.get('/auth/me');
+      user.value = data;
+      initialized.value = true;
+      return data;
+    } catch (e) {
+      error.value = authErrorMessage(e);
+      logout();
+      return null;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function init() {
+    if (initialized.value) return user.value;
+    if (!token.value) {
+      initialized.value = true;
+      return null;
+    }
+    return fetchMe();
+  }
+
+  function logout() {
+    token.value = '';
+    user.value = null;
+    error.value = '';
+    initialized.value = true;
+    setAuthToken('');
+  }
+
+  function applySession(data) {
+    const accessToken = data?.access_token || '';
+    token.value = accessToken;
+    user.value = data?.user || null;
+    initialized.value = true;
+    error.value = '';
+    setAuthToken(accessToken);
+  }
+
+  async function runAuthRequest(action) {
+    loading.value = true;
+    error.value = '';
+    try {
+      return await action();
+    } catch (e) {
+      error.value = authErrorMessage(e);
+      throw e;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  function authErrorMessage(e) {
+    const detail = e?.response?.data?.detail;
+    if (typeof detail === 'string') return detail;
+    if (detail && typeof detail === 'object') return detail.message || '认证失败';
+    return e?.message || '认证失败';
+  }
+
+  function triggerCloudSync() {
+    try {
+      const cloudStore = useCloudStore();
+      cloudStore.syncUploadedBooks().catch(() => {});
+    } catch {
+      // cloud store 未初始化时忽略
+    }
+  }
+
+  function requireAuth() {
+    if (isLoggedIn.value) return true;
+    const { emit } = useEventBus();
+    emit('lingshu:open-login');
+    return false;
+  }
+
+  function requireAiAccess() {
+    return requireAuth();
+  }
+
+  return {
+    token,
+    user,
+    initialized,
+    loading,
+    error,
+    isLoggedIn,
+    isAuthor,
+    init,
+    login,
+    register,
+    fetchMe,
+    logout,
+    requireAuth,
+    requireAiAccess,
+  };
+});
+
+
+===== File: lingshu-app/src/stores/book.js =====
+
+/**
+ * 书籍 Store — 工作台书籍 + 分卷 + 章节管理
+ *
+ * 对应 Qt 模块: app_tree.py (树视图管理) + app_editor.py (章节编辑状态)
+ */
+import { defineStore } from 'pinia';
+import { ref, computed, reactive } from 'vue';
+import api from '../utils/api';
+
+const MAX_OPEN_CHAPTER_TABS = 20;
+
+export const useBookStore = defineStore('book', () => {
+  const books = ref([]);
+  const currentBook = ref(null);
+  const loading = ref(false);
+
+  // 通用层级标签管理：book / volume / chapter
+  const openTabs = reactive({});
+  const tabOrder = ref([]);
+  const activeTabKey = ref(null);
+
+  const currentBookId = computed(() => currentBook.value?.id ?? null);
+  const activeTab = computed(() => openTabs[activeTabKey.value] || null);
+  const activeChapterId = computed(() => activeTab.value?.kind === 'chapter' ? activeTab.value.id : null);
+  const activeTabCount = computed(() => tabOrder.value.length);
+  const maxOpenChapterTabs = MAX_OPEN_CHAPTER_TABS;
+
+  // ========== 书籍 ==========
+
+  async function fetchBooks() {
+    loading.value = true;
+    try {
+      const { data } = await api.get('/workspace/books');
+      books.value = data.items || [];
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  function upsertBookInList(book) {
+    if (!book?.id) return;
+    const index = books.value.findIndex(item => item.id === book.id);
+    if (index >= 0) {
+      books.value[index] = book;
+    } else {
+      books.value = [book, ...books.value];
+    }
+  }
+
+  async function createBook(title) {
+    const { data } = await api.post('/workspace/books', { title });
+    await fetchBooks();
+    currentBook.value = data.item;
+    return data.item;
+  }
+
+  async function fetchBook(bookId) {
+    if (currentBook.value && Number(currentBook.value.id) === Number(bookId)) {
+      return currentBook.value;
+    }
+    const { data } = await api.get(`/workspace/books/${bookId}`);
+    currentBook.value = data;
+    upsertBookInList(data);
+    updateOpenTabTitlesFromBook(data);
+    return data;
+  }
+
+  async function renameBook(bookId, title) {
+    await api.patch(`/workspace/books/${bookId}`, { title });
+    if (currentBook.value?.id === bookId) currentBook.value.title = title;
+    const book = books.value.find(b => b.id === bookId);
+    if (book) book.title = title;
+    updateLayerTabTitle(makeLayerTabKey('book', bookId), title);
+  }
+
+  async function deleteBook(bookId) {
+    await api.delete(`/workspace/books/${bookId}`);
+    books.value = books.value.filter(b => b.id !== bookId);
+    if (currentBook.value?.id === bookId) currentBook.value = null;
+  }
+
+  function resetWorkspaceState() {
+    books.value = [];
+    currentBook.value = null;
+    loading.value = false;
+    tabOrder.value = [];
+    activeTabKey.value = null;
+    Object.keys(openTabs).forEach((key) => {
+      delete openTabs[key];
+    });
+  }
+
+  // ========== 分卷 ==========
+
+  async function createVolume(bookId, title) {
+    const { data } = await api.post(`/workspace/books/${bookId}/volumes`, { title });
+    await fetchBook(bookId);
+    return data.item;
+  }
+
+  async function deleteVolume(volumeId) {
+    await api.delete(`/workspace/volumes/${volumeId}`);
+  }
+
+  // ========== 通用层级标签管理 ==========
+
+  function makeLayerTabKey(kind, id, meta = {}) {
+    if (kind === 'volume' && (id === null || id === undefined)) {
+      return `volume:unassigned:${meta.bookId ?? 'unknown'}`;
+    }
+    return `${kind}:${id}`;
+  }
+
+  function openLayerTab(kind, id, title, meta = {}) {
+    const key = makeLayerTabKey(kind, id, meta);
+    const existing = openTabs[key];
+    if (existing) {
+      activeTabKey.value = key;
+      return existing;
+    }
+    if (tabOrder.value.length >= MAX_OPEN_CHAPTER_TABS) {
+      const disposableKey = tabOrder.value.find(tabKey => !openTabs[tabKey]?.dirty && tabKey !== activeTabKey.value)
+        || tabOrder.value.find(tabKey => !openTabs[tabKey]?.dirty);
+      if (!disposableKey) return null;
+      closeLayerTab(disposableKey);
+    }
+    const tab = {
+      key,
+      kind,
+      id,
+      title,
+      dirty: false,
+      loaded: kind !== 'chapter',
+      loading: false,
+      content: null,
+      savedContent: null,
+      error: null,
+      meta: { ...meta },
+    };
+    openTabs[key] = tab;
+    tabOrder.value.push(key);
+    activeTabKey.value = key;
+    return tab;
+  }
+
+  function activateLayerTab(key) {
+    if (!openTabs[key]) return null;
+    activeTabKey.value = key;
+    return openTabs[key];
+  }
+
+  function closeLayerTab(key) {
+    const tab = openTabs[key];
+    if (!tab) return;
+    delete openTabs[key];
+    tabOrder.value = tabOrder.value.filter(tabKey => tabKey !== key);
+    if (activeTabKey.value === key) {
+      activeTabKey.value = tabOrder.value[tabOrder.value.length - 1] || null;
+    }
+  }
+
+  function updateLayerTabTitle(key, title) {
+    if (openTabs[key]) openTabs[key].title = title;
+  }
+
+  function openChapterTab(chapterId, title, meta = {}) {
+    return openLayerTab('chapter', chapterId, title, meta);
+  }
+
+  function closeChapterTab(chapterId) {
+    closeLayerTab(makeLayerTabKey('chapter', chapterId));
+  }
+
+  function getChapterTab(chapterId) {
+    return openTabs[makeLayerTabKey('chapter', chapterId)] || null;
+  }
+
+  function markTabDirty(chapterId, isDirty = true) {
+    const tab = getChapterTab(chapterId);
+    if (tab) tab.dirty = isDirty;
+  }
+
+  function markTabClean(chapterId, savedContent = undefined) {
+    const tab = getChapterTab(chapterId);
+    if (tab) {
+      tab.dirty = false;
+      tab.savedContent = savedContent === undefined ? tab.content : savedContent;
+    }
+  }
+
+  function updateTabTitle(chapterId, title) {
+    const tab = getChapterTab(chapterId);
+    if (tab) tab.title = title;
+  }
+
+  function setTabLoading(chapterId, isLoading = true) {
+    const tab = getChapterTab(chapterId);
+    if (tab) {
+      tab.loading = isLoading;
+      tab.error = null;
+    }
+  }
+
+  function setTabContent(chapterId, content, { dirty = false, savedContent = content } = {}) {
+    const tab = getChapterTab(chapterId);
+    if (tab) {
+      tab.content = content;
+      tab.savedContent = savedContent;
+      tab.loaded = true;
+      tab.loading = false;
+      tab.error = null;
+      tab.dirty = dirty;
+    }
+  }
+
+  function updateTabAiProbability(chapterId, probability = 0, level = 'none') {
+    const safeProbability = Math.max(0, Math.min(100, Number(probability) || 0));
+    const safeLevel = String(level || 'none');
+    const tab = getChapterTab(chapterId);
+    if (tab) {
+      tab.ai_probability = safeProbability;
+      tab.ai_probability_level = safeLevel;
+    }
+    updateChapterInBookTree(chapterId, (chapter) => {
+      chapter.ai_probability = safeProbability;
+      chapter.ai_probability_level = safeLevel;
+    });
+  }
+
+  function updateTabContent(chapterId, content) {
+    const tab = getChapterTab(chapterId);
+    if (tab) {
+      tab.content = content;
+      tab.loaded = true;
+    }
+  }
+
+  function revertTabContent(chapterId) {
+    const tab = getChapterTab(chapterId);
+    if (tab) {
+      tab.content = tab.savedContent ?? '';
+      tab.dirty = false;
+      tab.loaded = true;
+    }
+  }
+
+  function setTabError(chapterId, error) {
+    const tab = getChapterTab(chapterId);
+    if (tab) {
+      tab.loading = false;
+      tab.error = error || 'load_failed';
+    }
+  }
+
+  function updateOpenTabTitlesFromBook(book) {
+    if (!book?.id) return;
+    updateLayerTabTitle(makeLayerTabKey('book', book.id), book.title || '未命名');
+    for (const volume of book.volumes || []) {
+      updateLayerTabTitle(
+        makeLayerTabKey('volume', volume.id, { bookId: book.id }),
+        volume.title || '正文',
+      );
+      for (const chapter of volume.chapters || []) {
+        updateTabTitle(chapter.id, chapter.title || `章节 #${chapter.id}`);
+      }
+    }
+  }
+
+  function updateChapterInBookTree(chapterId, updater) {
+    if (!currentBook.value?.volumes) return;
+    for (const volume of currentBook.value.volumes) {
+      const chapter = (volume.chapters || []).find(item => Number(item.id) === Number(chapterId));
+      if (chapter) {
+        updater(chapter);
+        return;
+      }
+    }
+  }
+
+  const activeTabList = computed(() =>
+    tabOrder.value.map(key => openTabs[key]).filter(Boolean)
+  );
+
+  // ========== 大纲 ==========
+
+  async function fetchOutline(bookId) {
+    const { data } = await api.get(`/workspace/books/${bookId}/outline`);
+    return data;
+  }
+
+  async function saveOutline(bookId, outlineText) {
+    await api.put(`/workspace/books/${bookId}/outline`, { outline_text: outlineText });
+  }
+
+  function setOutlineText(text) {
+    if (currentBook.value) {
+      currentBook.value.outline_text = text || '';
+    }
+  }
+
+  return {
+    books, currentBook, currentBookId, loading, maxOpenChapterTabs,
+    openTabs, tabOrder, activeTabKey, activeTab, activeChapterId, activeTabCount, activeTabList,
+    fetchBooks, createBook, fetchBook, renameBook, deleteBook, resetWorkspaceState,
+    createVolume, deleteVolume,
+    makeLayerTabKey, openLayerTab, activateLayerTab, closeLayerTab, updateLayerTabTitle,
+    openChapterTab, closeChapterTab, getChapterTab, markTabDirty, markTabClean, updateTabTitle,
+    setTabLoading, setTabContent, updateTabContent, updateTabAiProbability, revertTabContent, setTabError,
+    fetchOutline, saveOutline, setOutlineText,
+  };
+});
+
+
+===== File: lingshu-app/src/stores/chapter.js =====
+
+/**
+ * 章节 Store — 章节内容管理
+ */
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+import api from '../utils/api';
+
+export const useChapterStore = defineStore('chapter', () => {
+  const chapters = ref([]);
+  const currentChapter = ref(null);
+  const loading = ref(false);
+  const saving = ref(false);
+
+  async function fetchChapters(bookId) {
+    loading.value = true;
+    try {
+      const { data } = await api.get(`/workspace/books/${bookId}/chapters`);
+      chapters.value = data.items || [];
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function fetchChapter(chapterId) {
+    const { data } = await api.get(`/workspace/chapters/${chapterId}`);
+    currentChapter.value = data;
+    return data;
+  }
+
+  async function createChapter(bookId, title, volumeId = null) {
+    const path = volumeId
+      ? `/workspace/volumes/${volumeId}/chapters`
+      : `/workspace/books/${bookId}/chapters`;
+    const { data } = await api.post(path, { title, book_id: bookId });
+    chapters.value.push(data.item || data);
+    return data.item || data;
+  }
+
+  async function saveChapter(chapterId, payload) {
+    saving.value = true;
+    try {
+      const { data } = await api.patch(`/workspace/chapters/${chapterId}`, payload);
+      currentChapter.value = data.item || data;
+      return data;
+    } finally {
+      saving.value = false;
+    }
+  }
+
+  async function deleteChapter(chapterId) {
+    await api.delete(`/workspace/chapters/${chapterId}`);
+    chapters.value = chapters.value.filter(c => c.id !== chapterId);
+  }
+
+  return { chapters, currentChapter, loading, saving, fetchChapters, fetchChapter, createChapter, saveChapter, deleteChapter };
+});
+
+
+===== File: lingshu-app/src/stores/character.js =====
+
+/**
+ * 人物 Store — 管理人物卡列表状态，支持写回事件自动刷新
+ */
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+import api from '../utils/api';
+import { useEventBus } from '../composables/useEventBus';
+
+export const useCharacterStore = defineStore('character', () => {
+  const characters = ref([]);
+  const characterSchemas = ref({ protagonist: [], supporting: [] });
+  const loading = ref(false);
+  const lastBookId = ref(null);
+  let _busListenersBound = false;
+
+  async function fetchCharacters(bookId) {
+    if (!bookId) {
+      characters.value = [];
+      characterSchemas.value = { protagonist: [], supporting: [] };
+      return;
+    }
+    lastBookId.value = bookId;
+    loading.value = true;
+    try {
+      const { data } = await api.get(`/workspace/books/${bookId}/characters`);
+      characters.value = data.items || [];
+      characterSchemas.value = data.schemas || characterSchemas.value;
+    } catch {
+      characters.value = [];
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  function refresh() {
+    if (lastBookId.value) fetchCharacters(lastBookId.value);
+  }
+
+  function _bindBusListeners() {
+    if (_busListenersBound) return;
+    const { on } = useEventBus();
+    on('lingshu:characters-updated', (payload) => {
+      if (!payload || !lastBookId.value) return;
+      if (payload.bookId && Number(payload.bookId) !== Number(lastBookId.value)) return;
+      refresh();
+    });
+    on('lingshu:writeback-completed', (payload) => {
+      if (!payload || !lastBookId.value) return;
+      if (payload.bookId && Number(payload.bookId) !== Number(lastBookId.value)) return;
+      // 仅当写回目标是 character 或批量写回时刷新
+      if (payload.writebackTarget && payload.writebackTarget !== 'character') return;
+      refresh();
+    });
+    _busListenersBound = true;
+  }
+
+  // 首次调用时绑定事件监听
+  _bindBusListeners();
+
+  return { characters, characterSchemas, loading, fetchCharacters, refresh };
+});
+
+
+===== File: lingshu-app/src/stores/cloud.js =====
+
+/**
+ * 云端同步 Store — 管理书籍上传/同步状态
+ */
+import { defineStore } from 'pinia';
+import { ref, computed } from 'vue';
+import api from '../utils/api';
+
+export const useCloudStore = defineStore('cloud', () => {
+  // 同步状态: 'idle' | 'uploading' | 'syncing' | 'synced' | 'error'
+  const syncStatus = ref('idle');
+  const syncError = ref('');
+  const lastSyncedAt = ref(null);
+
+  const isSyncing = computed(() => syncStatus.value === 'uploading' || syncStatus.value === 'syncing');
+
+  async function uploadBookToCloud(bookId) {
+    // 验证 bookId 为正整数
+    if (!bookId || !Number.isInteger(bookId) || bookId <= 0) {
+      syncError.value = '无效的书籍ID';
+      return;
+    }
+    syncStatus.value = 'uploading';
+    syncError.value = '';
+    try {
+      const { data } = await api.post(`/cloud/books/${bookId}/upload`);
+      syncStatus.value = 'synced';
+      lastSyncedAt.value = new Date().toISOString();
+      return data;
+    } catch (e) {
+      syncStatus.value = 'error';
+      syncError.value = e?.response?.data?.detail || e?.message || '上传失败';
+      throw e;
+    }
+  }
+
+  async function syncUploadedBooks() {
+    syncStatus.value = 'syncing';
+    syncError.value = '';
+    try {
+      const { data } = await api.post('/cloud/sync');
+      syncStatus.value = 'synced';
+      lastSyncedAt.value = new Date().toISOString();
+      return data;
+    } catch (e) {
+      syncStatus.value = 'error';
+      syncError.value = e?.response?.data?.detail || e?.message || '同步失败';
+      throw e;
+    }
+  }
+
+  async function downloadCloudBook(cloudBookId) {
+    if (!cloudBookId || !Number.isInteger(cloudBookId) || cloudBookId <= 0) {
+      syncError.value = '无效的云端书籍ID';
+      return;
+    }
+    syncStatus.value = 'syncing';
+    syncError.value = '';
+    try {
+      const { data } = await api.post(`/cloud/books/${cloudBookId}/download`);
+      syncStatus.value = 'synced';
+      lastSyncedAt.value = new Date().toISOString();
+      return data;
+    } catch (e) {
+      syncStatus.value = 'error';
+      syncError.value = e?.response?.data?.detail || e?.message || '下载失败';
+      throw e;
+    }
+  }
+
+  async function fetchSyncStatus() {
+    try {
+      const { data } = await api.get('/cloud/sync/status');
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  function resetStatus() {
+    syncStatus.value = 'idle';
+    syncError.value = '';
+  }
+
+  return {
+    syncStatus,
+    syncError,
+    lastSyncedAt,
+    isSyncing,
+    uploadBookToCloud,
+    downloadCloudBook,
+    syncUploadedBooks,
+    fetchSyncStatus,
+    resetStatus,
+  };
+});
+
+
+===== File: lingshu-app/src/stores/skill.js =====
+
+/**
+ * Skills Store — 占位
+ */
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+
+export const useSkillStore = defineStore('skill', () => {
+  const skills = ref([]);
+
+  async function fetchSkills(_bookId) {
+    // TODO: 阶段 2 实现
+  }
+
+  return { skills, fetchSkills };
+});
+
+
+===== File: lingshu-app/src/stores/task.js =====
+
+/**
+ * 任务 Store — AI 任务状态管理，占位
+ */
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+
+export const useTaskStore = defineStore('task', () => {
+  const tasks = ref([]);
+
+  function addTask(task) {
+    tasks.value.unshift({ id: Date.now(), status: 'pending', ...task });
+  }
+
+  function updateTask(taskId, updates) {
+    const idx = tasks.value.findIndex(t => t.id === taskId);
+    if (idx >= 0) Object.assign(tasks.value[idx], updates);
+  }
+
+  function clearCompleted() {
+    tasks.value = tasks.value.filter(t => t.status !== 'completed');
+  }
+
+  return { tasks, addTask, updateTask, clearCompleted };
+});
+
+
+===== File: lingshu-app/src/stores/theme.js =====
+
+/**
+ * 主题 Store — 4 套预设主题切换
+ */
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+
+const THEMES = {
+  white: { label: '白昼', className: '' },
+  'light-blue': { label: '浅蓝', className: 'theme-light-blue' },
+  night: { label: '暗夜', className: 'theme-night' },
+  sepia: { label: '羊皮纸', className: 'theme-sepia' },
+};
+
+export const useThemeStore = defineStore('theme', () => {
+  const saved = localStorage.getItem('lingshu_theme') || 'white';
+  const current = ref(saved in THEMES ? saved : 'white');
+
+  const themes = THEMES;
+  const currentLabel = ref(THEMES[current.value].label);
+
+  function apply(newTheme) {
+    if (!(newTheme in THEMES)) return;
+    // 移除旧主题 class
+    Object.values(THEMES).forEach(t => {
+      if (t.className) document.documentElement.classList.remove(t.className);
+    });
+    // 应用新主题
+    current.value = newTheme;
+    currentLabel.value = THEMES[newTheme].label;
+    const cls = THEMES[newTheme].className;
+    if (cls) document.documentElement.classList.add(cls);
+    localStorage.setItem('lingshu_theme', newTheme);
+  }
+
+  function toggle() {
+    const keys = Object.keys(THEMES);
+    const idx = keys.indexOf(current.value);
+    apply(keys[(idx + 1) % keys.length]);
+  }
+
+  // 初始化时应用保存的主题
+  apply(current.value);
+
+  return { current, currentLabel, themes, apply, toggle };
+});
+
+
+===== File: lingshu-app/src/stores/websocket.js =====
+
+/**
+ * WebSocket Store — 连接管理（含自动重连）
+ */
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+import { buildWsUrl, sendWsAuth } from '../utils/api';
+
+const RECONNECT_DELAY_MS = 3000;
+const MAX_RECONNECT_ATTEMPTS = 5;
+
+export const useWsStore = defineStore('ws', () => {
+  const connections = ref({});
+  const status = ref({});
+
+  function connect(url) {
+    if (connections.value[url]) return connections.value[url];
+
+    const ws = new WebSocket(buildWsUrl(url));
+    let reconnectAttempts = 0;
+    let intentionalClose = false;
+
+    ws.onopen = () => {
+      status.value[url] = 'connected';
+      reconnectAttempts = 0;
+      // 重连后重新发送认证消息
+      sendWsAuth(ws);
+    };
+    ws.onclose = () => {
+      status.value[url] = 'disconnected';
+      delete connections.value[url];
+      // 主动断开时不重连
+      if (intentionalClose) return;
+      // 自动重连（指数退避）
+      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+        reconnectAttempts++;
+        const delay = RECONNECT_DELAY_MS * Math.pow(2, reconnectAttempts - 1);
+        setTimeout(() => {
+          if (!connections.value[url]) {
+            connect(url);
+          }
+        }, delay);
+      }
+    };
+    ws.onerror = () => { status.value[url] = 'error'; };
+
+    connections.value[url] = ws;
+    status.value[url] = 'connecting';
+    // 保存 intentionalClose 标志以便 disconnect 使用
+    ws._setIntentionalClose = () => { intentionalClose = true; };
+    return ws;
+  }
+
+  function disconnect(url) {
+    const ws = connections.value[url];
+    if (ws) {
+      if (ws._setIntentionalClose) ws._setIntentionalClose();
+      ws.close();
+      delete connections.value[url];
+    }
+  }
+
+  function send(url, message) {
+    const ws = connections.value[url];
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(message));
+    }
+  }
+
+  function disconnectAll() {
+    Object.keys(connections.value).forEach(disconnect);
+  }
+
+  return { connections, status, connect, disconnect, send, disconnectAll };
+});
+
+
+===== File: lingshu-app/src/stores/workspace.js =====
+
+/**
+ * 工作台 Store — 工作台 UI 状态收口
+ *
+ * 收纳 WorkspaceLayout 中的编辑器模式、抽屉选中类型、大纲数据/Schema、
+ * 面板宽度等 UI 状态，避免组件本地 ref 散落。
+ */
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+
+export const useWorkspaceStore = defineStore('workspace', () => {
+  const editorMode = ref('idle'); // 'idle' | 'outline'
+  const drawerSelectionKind = ref('none'); // 'none' | 'book' | 'volume' | 'chapter'
+  const activeOutlineData = ref({});
+  const activeOutlineSchema = ref([]);
+  const libraryPanelWidth = ref(260);
+  const drawerPanelWidth = ref(360);
+  const isSavingChapterOrder = ref(false);
+
+  function setEditorMode(mode) {
+    editorMode.value = mode;
+  }
+
+  function setDrawerSelectionKind(kind) {
+    drawerSelectionKind.value = kind;
+  }
+
+  function setOutlineData(data) {
+    activeOutlineData.value = data;
+  }
+
+  function setOutlineSchema(schema) {
+    activeOutlineSchema.value = schema;
+  }
+
+  function setLibraryPanelWidth(width) {
+    libraryPanelWidth.value = width;
+  }
+
+  function setDrawerPanelWidth(width) {
+    drawerPanelWidth.value = width;
+  }
+
+  function setSavingChapterOrder(val) {
+    isSavingChapterOrder.value = val;
+  }
+
+  function resetWorkspace() {
+    editorMode.value = 'idle';
+    drawerSelectionKind.value = 'none';
+    activeOutlineData.value = {};
+    activeOutlineSchema.value = [];
+  }
+
+  return {
+    editorMode,
+    drawerSelectionKind,
+    activeOutlineData,
+    activeOutlineSchema,
+    libraryPanelWidth,
+    drawerPanelWidth,
+    isSavingChapterOrder,
+    setEditorMode,
+    setDrawerSelectionKind,
+    setOutlineData,
+    setOutlineSchema,
+    setLibraryPanelWidth,
+    setDrawerPanelWidth,
+    setSavingChapterOrder,
+    resetWorkspace,
+  };
+});
+
+
+===== File: lingshu-app/src/stores/world.js =====
+
+/**
+ * 世界观 Store — 管理世界观数据状态，支持写回事件自动刷新
+ */
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+import api from '../utils/api';
+import { useEventBus } from '../composables/useEventBus';
+
+export const useWorldStore = defineStore('world', () => {
+  const worldText = ref('');
+  const worldData = ref({});
+  const worldSchema = ref([]);
+  const loading = ref(false);
+  const lastBookId = ref(null);
+  let _busListenersBound = false;
+
+  async function fetchWorld(bookId) {
+    if (!bookId) {
+      worldText.value = '';
+      worldData.value = {};
+      worldSchema.value = [];
+      return;
+    }
+    lastBookId.value = bookId;
+    loading.value = true;
+    try {
+      const { data } = await api.get(`/workspace/books/${bookId}/world`);
+      worldText.value = data.world_text || '';
+      worldData.value = data.world_data || {};
+      worldSchema.value = data.world_schema || [];
+    } catch {
+      worldText.value = '';
+      worldData.value = {};
+      worldSchema.value = [];
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  function refresh() {
+    if (lastBookId.value) fetchWorld(lastBookId.value);
+  }
+
+  function _bindBusListeners() {
+    if (_busListenersBound) return;
+    const { on } = useEventBus();
+    on('lingshu:world-updated', (payload) => {
+      if (!payload || !lastBookId.value) return;
+      if (payload.bookId && Number(payload.bookId) !== Number(lastBookId.value)) return;
+      refresh();
+    });
+    on('lingshu:writeback-completed', (payload) => {
+      if (!payload || !lastBookId.value) return;
+      if (payload.bookId && Number(payload.bookId) !== Number(lastBookId.value)) return;
+      // 仅当写回目标是 world_entry 或批量写回时刷新
+      if (payload.writebackTarget && payload.writebackTarget !== 'world_entry') return;
+      refresh();
+    });
+    _busListenersBound = true;
+  }
+
+  // 首次调用时绑定事件监听
+  _bindBusListeners();
+
+  return { worldText, worldData, worldSchema, loading, fetchWorld, refresh };
+});
+
+
+===== File: lingshu-app/src/utils/api.js =====
+
+import axios from 'axios';
+import { useEventBus } from '../composables/useEventBus';
+
+const electronBridge = typeof window !== 'undefined' ? window.lingshu : null;
+
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
+  || electronBridge?.apiBaseUrl
+  || 'http://127.0.0.1:8787/api';
+
+export const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL
+  || electronBridge?.wsBaseUrl
+  || 'ws://127.0.0.1:8787/ws';
+
+function _sameOriginWsBase() {
+  if (typeof location === 'undefined' || !location.host) return null;
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${location.host}/ws`;
+}
+
+function _normalizeWsUrl(rawUrl) {
+  const url = new URL(rawUrl);
+  if (!['ws:', 'wss:'].includes(url.protocol)) {
+    throw new Error('WebSocket URL must use ws:// or wss://');
+  }
+  if (url.username || url.password) {
+    throw new Error('WebSocket URL must not include credentials');
+  }
+  if (!url.pathname.startsWith('/ws')) {
+    throw new Error('WebSocket URL path must start with /ws');
+  }
+  return url;
+}
+
+function _allowedWsOrigins() {
+  const origins = new Set();
+  try {
+    origins.add(_normalizeWsUrl(WS_BASE_URL).origin);
+  } catch {
+    // Invalid configured base URL will be reported when buildWsUrl is used.
+  }
+  const sameOriginBase = _sameOriginWsBase();
+  if (sameOriginBase) {
+    origins.add(new URL(sameOriginBase).origin);
+  }
+  return origins;
+}
+
+function _assertAllowedWsUrl(rawUrl) {
+  const url = _normalizeWsUrl(rawUrl);
+  if (!_allowedWsOrigins().has(url.origin)) {
+    throw new Error(`WebSocket URL origin is not allowed: ${url.origin}`);
+  }
+  return url.toString();
+}
+
+export const api = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 0,
+});
+
+// ============================================================
+//  Token 安全存储 — Electron 环境使用 safeStorage 加密
+//  策略：优先内存 Token，Electron 环境仅使用 safeStorage 加密存储；
+//        非 Electron 环境只保存在内存中，刷新后重新登录。
+// ============================================================
+
+let _memoryToken = '';
+
+// Token 初始化就绪 Promise：防止异步解密未完成时请求发出 401
+let _tokenReadyResolve;
+const tokenReady = new Promise((resolve) => { _tokenReadyResolve = resolve; });
+
+function _initTokenFromSafeStorage() {
+  if (!electronBridge?.unprotectSecret) {
+    localStorage.removeItem('lingshu_token');
+    _tokenReadyResolve();
+    return;
+  }
+  const encrypted = localStorage.getItem('lingshu_token_encrypted');
+  if (encrypted) {
+    electronBridge.unprotectSecret(encrypted).then((decrypted) => {
+      if (decrypted) {
+        _memoryToken = decrypted;
+      }
+      _tokenReadyResolve();
+    }).catch(() => {
+      // safeStorage 解密失败，不回退到明文 Token，强制重新登录
+      localStorage.removeItem('lingshu_token_encrypted');
+      localStorage.removeItem('lingshu_token');
+      _tokenReadyResolve();
+    });
+  } else {
+    localStorage.removeItem('lingshu_token');
+    _tokenReadyResolve();
+  }
+}
+
+function _migrateToSafeStorage(token) {
+  localStorage.removeItem('lingshu_token');
+  if (!electronBridge?.protectSecret || !token) return;
+  electronBridge.protectSecret(token).then((encrypted) => {
+    localStorage.setItem('lingshu_token_encrypted', encrypted);
+    localStorage.removeItem('lingshu_token');
+  }).catch(() => {
+    // safeStorage 加密失败时只保留内存 token，不回退到明文 localStorage。
+    localStorage.removeItem('lingshu_token_encrypted');
+    localStorage.removeItem('lingshu_token');
+  });
+}
+
+function _clearTokenStorage() {
+  _memoryToken = '';
+  localStorage.removeItem('lingshu_token');
+  localStorage.removeItem('lingshu_token_encrypted');
+}
+
+// 初始化：从安全存储加载 token
+_initTokenFromSafeStorage();
+
+export function getAuthToken() {
+  return _memoryToken || '';
+}
+
+export function setAuthToken(token) {
+  if (token) {
+    _memoryToken = token;
+    if (electronBridge?.protectSecret) {
+      // Electron 环境：仅使用 safeStorage 加密存储，不写明文 localStorage
+      _migrateToSafeStorage(token);
+    } else {
+      localStorage.removeItem('lingshu_token');
+    }
+  } else {
+    _clearTokenStorage();
+  }
+}
+
+export function buildWsUrl(path) {
+  const value = String(path || '');
+  if (value.startsWith('ws://') || value.startsWith('wss://')) {
+    return _assertAllowedWsUrl(value);
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) {
+    throw new Error('WebSocket URL must be a /ws path or ws(s) URL');
+  }
+  const base = _normalizeWsUrl(WS_BASE_URL || _sameOriginWsBase());
+  const basePath = base.pathname.replace(/\/+$/, '');
+  const childPath = value.startsWith('/') ? value : `/${value}`;
+  const finalPath = childPath === basePath || childPath.startsWith(`${basePath}/`)
+    ? childPath
+    : `${basePath}${childPath}`;
+  return _assertAllowedWsUrl(`${base.protocol}//${base.host}${finalPath}`);
+}
+
+export function sendWsAuth(ws) {
+  const token = getAuthToken();
+  ws.send(JSON.stringify({ type: 'auth', payload: { token } }));
+  return token;
+}
+
+// 请求拦截器：等待 Token 就绪后自动附加 Authorization
+api.interceptors.request.use(async (config) => {
+  await tokenReady;
+  const token = getAuthToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// 响应拦截器：统一错误处理
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      _clearTokenStorage();
+      const url = String(error.config?.url || '');
+      const isAuthRequest = url.includes('/auth/login') || url.includes('/auth/register');
+      if (!isAuthRequest && typeof window !== 'undefined') {
+        const { emit } = useEventBus();
+        emit('lingshu:auth-expired');
+        emit('lingshu:open-login');
+      }
+    }
+    return Promise.reject(error);
+  },
+);
+
+export default api;

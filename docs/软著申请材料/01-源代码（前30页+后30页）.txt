@@ -1,0 +1,3040 @@
+══════════════════════════════════════════════════════════════
+  灵枢智能写作工作台软件 V3.0  源代码
+══════════════════════════════════════════════════════════════
+
+  申请人：________（填写真实姓名）
+  软件全称：灵枢智能写作工作台软件
+  软件简称：灵枢 LingShu
+  版本号：V3.0
+
+  本文档为软件著作权登记源代码鉴别材料，共 60 页。
+  前 30 页：核心分析引擎（novel_app/analysis/）
+  后 30 页：后端服务 + 前端框架 + 桌面壳
+
+  所有代码为项目自研，已剔除第三方库与缓存目录。
+══════════════════════════════════════════════════════════════
+
+
+
+────────────────────────────────────────────────────────────────────────
+  📄 novel_app/analysis/__init__.py
+  📝 分析引擎包入口，导出全部公开 API
+
+────────────────────────────────────────────────────────────────────────
+    1 │ from __future__ import annotations
+    2 │ 
+    3 │ from novel_app.analysis.backtrack import BacktrackPlanner, BacktrackTaskResult
+    4 │ from novel_app.analysis.card_builder import (
+    5 │     AnalysisCardBuilder,
+    6 │     BuiltAnalysisCards,
+    7 │     build_analysis_card_drafts,
+    8 │     verify_analysis_card_evidence,
+    9 │ )
+   10 │ from novel_app.analysis.card_coordinator import CardCoordinator, CardCoordinatorResult
+   11 │ from novel_app.analysis.card_generators_v3 import V3_CARD_MIN_FACT_CONFIDENCE
+   12 │ from novel_app.analysis.chunker import AnalysisChunk, AnalysisChunker
+   13 │ from novel_app.analysis.coreference import CoreferenceResolver
+   14 │ from novel_app.analysis.entity_resolver import (
+   15 │     EntityMention,
+   16 │     EntityResolutionResult,
+   17 │     EntityResolver,
+   18 │     ResolvedEntity,
+   19 │     normalize_entity_alias,
+   20 │     resolve_payload_entities,
+   21 │     stable_entity_uid,
+   22 │ )
+   23 │ from novel_app.analysis.entity_store import EntityStore
+   24 │ from novel_app.analysis.evidence import (
+   25 │     EvidenceGateResult,
+   26 │     EvidenceRef,
+   27 │     EvidenceResolution,
+   28 │     evidence_gate_result,
+   29 │     evidence_summary,
+   30 │     extract_evidence_refs,
+   31 │     resolve_evidence_refs,
+   32 │ )
+   33 │ from novel_app.analysis.fact_extractor import FACT_MIN_CONFIDENCE, FactExtractor
+   34 │ from novel_app.analysis.fact_store import FactStore
+   35 │ from novel_app.analysis.memory_classifier import MemoryClassifier
+   36 │ from novel_app.analysis.memory_compressor import MemoryCompressor
+   37 │ from novel_app.analysis.memory_window import MemoryWindow, MemoryWindowBuilder
+   38 │ from novel_app.analysis.mention_extractor import MENTION_MIN_CONFIDENCE, MentionExtractor, MentionSeed
+   39 │ from novel_app.analysis.models import AnalysisApplyResult, AnalysisCardDraft, AnalysisWritebackResult
+   40 │ from novel_app.analysis.payload_normalizer import (
+   41 │     has_formal_writeback_content,
+   42 │     has_unresolved_analysis_items,
+   43 │     normalize_book_analysis_payload,
+   44 │ )
+   45 │ 
+   46 │ # DEPRECATED: 三层金字塔系统，已被 V3 替代。新代码应使用 AnalysisPipelineV3。
+   47 │ from novel_app.analysis.pipeline import AnalysisPipeline, AnalysisPipelineResult, extract_block_facts
+   48 │ from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3, AnalysisPipelineV3Result
+   49 │ from novel_app.analysis.probe_executor import ProbeExecutionResult, ProbeExecutor
+   50 │ from novel_app.analysis.probe_planner import SUPPORTED_PROBE_TYPES, ProbePlanner
+   51 │ from novel_app.analysis.schemas_v3 import (
+   52 │     ANALYSIS_V3_SCHEMA_VERSION,
+   53 │     AtomicFact,
+   54 │     EntityMentionCandidate,
+   55 │     ResolvedEntityCandidate,
+   56 │     SemanticBlock,
+   57 │ )
+   58 │ from novel_app.analysis.semantic_chunker import SEMANTIC_CHUNKER_VERSION, SemanticChunker
+   59 │ from novel_app.analysis.store import AnalysisStore
+   60 │ from novel_app.analysis.writeback import apply_book_analysis_payload, filter_untrusted_book_analysis_payload
+   61 │ from novel_app.analysis.writeback_card_generator import (
+   62 │     WritebackCardGenerationError,
+   63 │     WritebackCardGenerationResult,
+   64 │     WritebackCardGenerator,
+   65 │ )
+   66 │ 
+   67 │ __all__ = [
+   68 │     "AnalysisApplyResult",
+   69 │     "AnalysisCardBuilder",
+   70 │     "AnalysisCardDraft",
+   71 │     "AnalysisWritebackResult",
+   72 │     "AnalysisChunk",
+   73 │     "AnalysisChunker",
+   74 │     "BacktrackPlanner",
+   75 │     "BacktrackTaskResult",
+   76 │     "CardCoordinator",
+   77 │     "CardCoordinatorResult",
+   78 │     "AnalysisPipeline",
+   79 │     "AnalysisPipelineResult",
+   80 │     "AnalysisPipelineV3",
+   81 │     "AnalysisPipelineV3Result",
+   82 │     "AnalysisStore",
+   83 │     "AtomicFact",
+   84 │     "BuiltAnalysisCards",
+   85 │     "EntityMention",
+   86 │     "EntityMentionCandidate",
+   87 │     "EntityResolutionResult",
+   88 │     "EntityResolver",
+   89 │     "EntityStore",
+   90 │     "CoreferenceResolver",
+   91 │     "FactExtractor",
+   92 │     "FactStore",
+   93 │     "EvidenceGateResult",
+   94 │     "EvidenceRef",
+   95 │     "EvidenceResolution",
+   96 │     "ResolvedEntity",
+   97 │     "ResolvedEntityCandidate",
+   98 │     "SemanticBlock",
+   99 │     "SemanticChunker",
+  100 │     "MentionExtractor",
+  101 │     "MentionSeed",
+  102 │     "MemoryClassifier",
+  103 │     "MemoryCompressor",
+  104 │     "MemoryWindow",
+  105 │     "MemoryWindowBuilder",
+  106 │     "ProbeExecutionResult",
+  107 │     "ProbeExecutor",
+  108 │     "ProbePlanner",
+  109 │     "MENTION_MIN_CONFIDENCE",
+  110 │     "FACT_MIN_CONFIDENCE",
+  111 │     "SUPPORTED_PROBE_TYPES",
+  112 │     "V3_CARD_MIN_FACT_CONFIDENCE",
+  113 │     "ANALYSIS_V3_SCHEMA_VERSION",
+  114 │     "SEMANTIC_CHUNKER_VERSION",
+  115 │     "WritebackCardGenerationError",
+  116 │     "WritebackCardGenerationResult",
+  117 │     "WritebackCardGenerator",
+  118 │     "build_analysis_card_drafts",
+  119 │     "evidence_gate_result",
+  120 │     "evidence_summary",
+  121 │     "extract_block_facts",
+  122 │     "extract_evidence_refs",
+  123 │     "has_formal_writeback_content",
+  124 │     "has_unresolved_analysis_items",
+  125 │     "normalize_book_analysis_payload",
+  126 │     "normalize_entity_alias",
+  127 │     "resolve_payload_entities",
+  128 │     "resolve_evidence_refs",
+  129 │     "stable_entity_uid",
+  130 │     "verify_analysis_card_evidence",
+  131 │     "apply_book_analysis_payload",
+  132 │     "filter_untrusted_book_analysis_payload",
+  133 │ ]
+
+────────────────────────────────────────────────────────────────────────
+  📄 novel_app/analysis/schemas_v3.py
+  📝 V3 数据模型定义（语义块、实体候选、原子事实）
+
+────────────────────────────────────────────────────────────────────────
+    1 │ from __future__ import annotations
+    2 │ 
+    3 │ import hashlib
+    4 │ from dataclasses import dataclass, field
+    5 │ from typing import Any
+    6 │ 
+    7 │ ANALYSIS_V3_SCHEMA_VERSION = "analysis_v3_m4"
+    8 │ 
+    9 │ 
+   10 │ def stable_hash(value: str) -> str:
+   11 │     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
+   12 │ 
+   13 │ 
+   14 │ @dataclass(frozen=True)
+   15 │ class SemanticBlock:
+   16 │     book_id: int
+   17 │     block_uid: str
+   18 │     chunk_id: str
+   19 │     chunk_index: int
+   20 │     chapter_id: int | None
+   21 │     chapter_title: str
+   22 │     char_start: int
+   23 │     char_end: int
+   24 │     text: str
+   25 │     content_hash: str
+   26 │     structure_hash: str
+   27 │     pipeline_version: str
+   28 │     metadata: dict[str, Any] = field(default_factory=dict)
+   29 │ 
+   30 │     @classmethod
+   31 │     def from_text_span(
+   32 │         cls,
+   33 │         *,
+   34 │         book_id: int,
+   35 │         chapter_id: int | None,
+   36 │         chapter_title: str,
+   37 │         local_index: int,
+   38 │         chunk_index: int,
+   39 │         char_start: int,
+   40 │         char_end: int,
+   41 │         text: str,
+   42 │         pipeline_version: str,
+   43 │         split_reason: str,
+   44 │         chapter_content_hash: str = "",
+   45 │     ) -> SemanticBlock:
+   46 │         clean_text = str(text or "")
+   47 │         content_hash = stable_hash(clean_text)
+   48 │         chapter_label = str(chapter_id) if chapter_id is not None else "orphan"
+   49 │         block_uid = f"analysis-v3-chapter-{chapter_label}-part-{local_index:04d}"
+   50 │         chunk_id = f"semantic-{chapter_label}-part-{local_index:04d}"
+   51 │         structure_hash = stable_hash(
+   52 │             "|".join(
+   53 │                 [
+   54 │                     ANALYSIS_V3_SCHEMA_VERSION,
+   55 │                     str(book_id),
+   56 │                     chapter_label,
+   57 │                     str(char_start),
+   58 │                     str(char_end),
+   59 │                     str(len(clean_text)),
+   60 │                     content_hash,
+   61 │                 ]
+   62 │             )
+   63 │         )
+   64 │         return cls(
+   65 │             book_id=int(book_id),
+   66 │             block_uid=block_uid,
+   67 │             chunk_id=chunk_id,
+   68 │             chunk_index=int(chunk_index),
+   69 │             chapter_id=chapter_id,
+   70 │             chapter_title=str(chapter_title or ""),
+   71 │             char_start=max(0, int(char_start)),
+   72 │             char_end=max(0, int(char_end)),
+   73 │             text=clean_text,
+   74 │             content_hash=content_hash,
+   75 │             structure_hash=structure_hash,
+   76 │             pipeline_version=pipeline_version,
+   77 │             metadata={
+   78 │                 "schema_version": ANALYSIS_V3_SCHEMA_VERSION,
+   79 │                 "split_reason": split_reason,
+   80 │                 "chapter_title": str(chapter_title or ""),
+   81 │                 "text_length": len(clean_text),
+   82 │                 "chapter_content_hash": str(chapter_content_hash or ""),
+   83 │             },
+   84 │         )
+   85 │ 
+   86 │     def as_analysis_block(self) -> dict[str, Any]:
+   87 │         chapter_ids = [self.chapter_id] if self.chapter_id is not None else []
+   88 │         chapter_refs = [
+   89 │             {"id": self.chapter_id, "title": self.chapter_title}
+   90 │         ] if self.chapter_id is not None else []
+   91 │         return {
+   92 │             "block_uid": self.block_uid,
+   93 │             "chunk_id": self.chunk_id,
+   94 │             "chunk_index": self.chunk_index,
+   95 │             "chapter_id": self.chapter_id,
+   96 │             "chapter_ids": chapter_ids,
+   97 │             "chapter_refs": chapter_refs,
+   98 │             "char_start": self.char_start,
+   99 │             "char_end": self.char_end,
+  100 │             "text": self.text,
+  101 │             "summary": self.text[:500],
+  102 │             "content_hash": self.content_hash,
+  103 │             "structure_hash": self.structure_hash,
+  104 │             "pipeline_version": self.pipeline_version,
+  105 │             "metadata": self.metadata,
+  106 │         }
+  107 │ 
+  108 │     def as_dict(self) -> dict[str, Any]:
+  109 │         return {
+  110 │             "book_id": self.book_id,
+  111 │             "block_uid": self.block_uid,
+  112 │             "chunk_id": self.chunk_id,
+  113 │             "chunk_index": self.chunk_index,
+  114 │             "chapter_id": self.chapter_id,
+  115 │             "chapter_title": self.chapter_title,
+  116 │             "char_start": self.char_start,
+  117 │             "char_end": self.char_end,
+  118 │             "text": self.text,
+  119 │             "content_hash": self.content_hash,
+  120 │             "structure_hash": self.structure_hash,
+  121 │             "pipeline_version": self.pipeline_version,
+  122 │             "metadata": dict(self.metadata),
+  123 │         }
+  124 │ 
+  125 │ 
+  126 │ @dataclass(frozen=True)
+  127 │ class EntityMentionCandidate:
+  128 │     mention_uid: str
+  129 │     entity_type: str
+  130 │     normalized_text: str
+  131 │     quote_text: str
+  132 │     chapter_id: int | None
+  133 │     block_uid: str
+  134 │     char_start: int
+  135 │     char_end: int
+  136 │     confidence: float
+  137 │     status: str = "candidate"
+  138 │     source_rule: str = ""
+  139 │     metadata: dict[str, Any] = field(default_factory=dict)
+  140 │ 
+  141 │     @classmethod
+  142 │     def create(
+  143 │         cls,
+  144 │         *,
+  145 │         book_id: int,
+  146 │         run_id: int,
+  147 │         entity_type: str,
+  148 │         normalized_text: str,
+  149 │         quote_text: str,
+  150 │         chapter_id: int | None,
+  151 │         block_uid: str,
+  152 │         char_start: int,
+  153 │         char_end: int,
+  154 │         confidence: float,
+  155 │         source_rule: str,
+  156 │         metadata: dict[str, Any] | None = None,
+  157 │     ) -> EntityMentionCandidate:
+  158 │         uid_seed = "|".join(
+  159 │             [
+  160 │                 str(book_id),
+  161 │                 str(run_id),
+  162 │                 str(block_uid),
+  163 │                 str(chapter_id or ""),
+  164 │                 str(char_start),
+  165 │                 str(char_end),
+  166 │                 str(entity_type or ""),
+  167 │                 str(normalized_text or ""),
+  168 │                 str(source_rule or ""),
+  169 │             ]
+  170 │         )
+  171 │         return cls(
+  172 │             mention_uid=f"MEN-{stable_hash(uid_seed)[:16]}",
+  173 │             entity_type=str(entity_type or "unknown"),
+  174 │             normalized_text=str(normalized_text or ""),
+  175 │             quote_text=str(quote_text or ""),
+  176 │             chapter_id=chapter_id,
+  177 │             block_uid=str(block_uid or ""),
+  178 │             char_start=max(0, int(char_start)),
+  179 │             char_end=max(0, int(char_end)),
+  180 │             confidence=max(0.0, min(1.0, float(confidence or 0.0))),
+  181 │             status="candidate",
+  182 │             source_rule=str(source_rule or ""),
+  183 │             metadata={
+  184 │                 "schema_version": ANALYSIS_V3_SCHEMA_VERSION,
+  185 │                 **(metadata or {}),
+  186 │             },
+  187 │         )
+  188 │ 
+  189 │     def as_analysis_mention(self) -> dict[str, Any]:
+  190 │         return {
+  191 │             "mention_uid": self.mention_uid,
+  192 │             "entity_type": self.entity_type,
+  193 │             "normalized_text": self.normalized_text,
+  194 │             "quote_text": self.quote_text,
+  195 │             "chapter_id": self.chapter_id,
+  196 │             "block_uid": self.block_uid,
+  197 │             "char_start": self.char_start,
+  198 │             "char_end": self.char_end,
+  199 │             "confidence": self.confidence,
+  200 │             "status": self.status,
+  201 │             "source_rule": self.source_rule,
+  202 │             "metadata": dict(self.metadata),
+  203 │         }
+  204 │ 
+  205 │     def as_dict(self) -> dict[str, Any]:
+  206 │         return self.as_analysis_mention()
+  207 │ 
+  208 │ 
+  209 │ @dataclass(frozen=True)
+  210 │ class ResolvedEntityCandidate:
+  211 │     entity_uid: str
+  212 │     entity_type: str
+  213 │     canonical_name: str
+  214 │     aliases: tuple[str, ...]
+  215 │     mention_uids: tuple[str, ...]
+  216 │     confidence: float
+  217 │     status: str = "candidate"
+  218 │     source_rule: str = "auto_coreference"
+  219 │     summary: str = ""
+  220 │     metadata: dict[str, Any] = field(default_factory=dict)
+  221 │ 
+  222 │     def as_analysis_entity(self) -> dict[str, Any]:
+  223 │         return {
+  224 │             "entity_uid": self.entity_uid,
+  225 │             "entity_type": self.entity_type,
+  226 │             "canonical_name": self.canonical_name,
+  227 │             "aliases": list(self.aliases),
+  228 │             "mention_uids": list(self.mention_uids),
+  229 │             "confidence": self.confidence,
+  230 │             "status": self.status,
+  231 │             "source_rule": self.source_rule,
+  232 │             "summary": self.summary,
+  233 │             "metadata": dict(self.metadata),
+  234 │         }
+  235 │ 
+  236 │     def as_dict(self) -> dict[str, Any]:
+  237 │         return self.as_analysis_entity()
+  238 │ 
+  239 │ 
+  240 │ @dataclass(frozen=True)
+  241 │ class AtomicFact:
+  242 │     fact_uid: str
+  243 │     subject_entity_uid: str
+  244 │     fact_type: str
+  245 │     value: dict[str, Any]
+  246 │     quote_text: str
+  247 │     chapter_id: int | None
+  248 │     block_uid: str
+  249 │     confidence: float
+  250 │     memory_scope: str = "short_term"
+  251 │     memory_importance: str = "normal"
+  252 │     memory_type: str = "evidence"
+  253 │     importance_score: float = 0.0
+  254 │     status: str = "candidate"
+  255 │     metadata: dict[str, Any] = field(default_factory=dict)
+  256 │ 
+  257 │     @classmethod
+  258 │     def create(
+  259 │         cls,
+  260 │         *,
+  261 │         book_id: int,
+  262 │         run_id: int,
+  263 │         subject_entity_uid: str,
+  264 │         fact_type: str,
+  265 │         value: dict[str, Any],
+  266 │         quote_text: str,
+  267 │         chapter_id: int | None,
+  268 │         block_uid: str,
+  269 │         char_start: int,
+  270 │         char_end: int,
+  271 │         confidence: float,
+  272 │         source_rule: str,
+  273 │         metadata: dict[str, Any] | None = None,
+  274 │     ) -> AtomicFact:
+  275 │         uid_seed = "|".join(
+  276 │             [
+  277 │                 str(book_id),
+  278 │                 str(run_id),
+  279 │                 str(subject_entity_uid or ""),
+  280 │                 str(fact_type or ""),
+  281 │                 str(block_uid or ""),
+  282 │                 str(chapter_id or ""),
+  283 │                 str(char_start),
+  284 │                 str(char_end),
+  285 │                 stable_hash(quote_text),
+  286 │             ]
+  287 │         )
+  288 │         bounded_confidence = max(0.0, min(1.0, float(confidence or 0.0)))
+  289 │         return cls(
+  290 │             fact_uid=f"FACT-{stable_hash(uid_seed)[:16]}",
+  291 │             subject_entity_uid=str(subject_entity_uid or ""),
+  292 │             fact_type=str(fact_type or "event"),
+  293 │             value=dict(value or {}),
+  294 │             quote_text=str(quote_text or ""),
+  295 │             chapter_id=chapter_id,
+  296 │             block_uid=str(block_uid or ""),
+  297 │             confidence=bounded_confidence,
+  298 │             memory_scope="short_term",
+  299 │             memory_importance="normal",
+  300 │             memory_type="evidence",
+  301 │             importance_score=bounded_confidence,
+  302 │             status="candidate",
+  303 │             metadata={
+  304 │                 "schema_version": ANALYSIS_V3_SCHEMA_VERSION,
+  305 │                 "source_rule": str(source_rule or ""),
+  306 │                 "char_start": max(0, int(char_start)),
+  307 │                 "char_end": max(0, int(char_end)),
+  308 │                 **(metadata or {}),
+  309 │             },
+  310 │         )
+  311 │ 
+  312 │     def as_analysis_fact(self) -> dict[str, Any]:
+  313 │         return {
+  314 │             "fact_uid": self.fact_uid,
+  315 │             "subject_entity_uid": self.subject_entity_uid,
+  316 │             "fact_type": self.fact_type,
+  317 │             "value": dict(self.value),
+  318 │             "quote_text": self.quote_text,
+  319 │             "chapter_id": self.chapter_id,
+  320 │             "block_uid": self.block_uid,
+  321 │             "confidence": self.confidence,
+  322 │             "memory_scope": self.memory_scope,
+  323 │             "memory_importance": self.memory_importance,
+  324 │             "memory_type": self.memory_type,
+  325 │             "importance_score": self.importance_score,
+  326 │             "status": self.status,
+  327 │             "metadata": dict(self.metadata),
+  328 │         }
+  329 │ 
+  330 │     def as_dict(self) -> dict[str, Any]:
+  331 │         return self.as_analysis_fact()
+
+────────────────────────────────────────────────────────────────────────
+  📄 novel_app/analysis/semantic_chunker.py
+  📝 L1 语义感知分块器（场景/段落/句子边界识别）
+
+────────────────────────────────────────────────────────────────────────
+    1 │ from __future__ import annotations
+    2 │ 
+    3 │ import re
+    4 │ from dataclasses import dataclass
+    5 │ from typing import Any
+    6 │ 
+    7 │ from novel_app.analysis.schemas_v3 import SemanticBlock, stable_hash
+    8 │ 
+    9 │ SEMANTIC_CHUNKER_VERSION = "semantic_chunker_v1"
+   10 │ 
+   11 │ 
+   12 │ @dataclass(frozen=True)
+   13 │ class TextSpan:
+   14 │     start: int
+   15 │     end: int
+   16 │     text: str
+   17 │     reason: str
+   18 │ 
+   19 │ 
+   20 │ class SemanticChunker:
+   21 │     def __init__(
+   22 │         self,
+   23 │         *,
+   24 │         target_chars: int = 6000,
+   25 │         max_chars: int = 8000,
+   26 │         min_sentence_cut_chars: int = 1200,
+   27 │         overlap_sentences: int = 1,
+   28 │     ) -> None:
+   29 │         self.target_chars = max(1, int(target_chars))
+   30 │         self.max_chars = max(self.target_chars, int(max_chars))
+   31 │         self.min_sentence_cut_chars = max(200, int(min_sentence_cut_chars))
+   32 │         self.overlap_sentences = max(0, int(overlap_sentences))
+   33 │ 
+   34 │     def chunk_chapters(self, book_id: int, chapters: list[dict[str, Any]], *, pipeline_version: str) -> list[Semantic...
+   35 │         blocks: list[SemanticBlock] = []
+   36 │         for chapter in chapters:
+   37 │             chapter_id = self._int_or_none(chapter.get("id"))
+   38 │             title = str(chapter.get("title") or "")
+   39 │             content = str(chapter.get("content") or "")
+   40 │             if not content.strip():
+   41 │                 continue
+   42 │             chapter_content_hash = stable_hash(content)
+   43 │             local_index = 1
+   44 │             for span in self._chapter_spans(content):
+   45 │                 block = SemanticBlock.from_text_span(
+   46 │                     book_id=book_id,
+   47 │                     chapter_id=chapter_id,
+   48 │                     chapter_title=title,
+   49 │                     local_index=local_index,
+   50 │                     chunk_index=len(blocks) + 1,
+   51 │                     char_start=span.start,
+   52 │                     char_end=span.end,
+   53 │                     text=span.text,
+   54 │                     pipeline_version=pipeline_version,
+   55 │                     split_reason=span.reason,
+   56 │                     chapter_content_hash=chapter_content_hash,
+   57 │                 )
+   58 │                 blocks.append(block)
+   59 │                 local_index += 1
+   60 │ 
+   61 │         # 句子级重叠窗口：为每个 block 添加前一个 block 末尾的 overlap_sentences 个句子
+   62 │         if self.overlap_sentences > 0 and len(blocks) > 1:
+   63 │             blocks = self._apply_overlap_window(blocks)
+   64 │ 
+   65 │         return blocks
+   66 │ 
+   67 │     def _chapter_spans(self, content: str) -> list[TextSpan]:
+   68 │         source = str(content or "")
+   69 │         scene_spans = self._scene_spans(source)
+   70 │         blocks: list[TextSpan] = []
+   71 │         for scene in scene_spans:
+   72 │             pieces = self._paragraph_spans(source, scene.start, scene.end)
+   73 │             if not pieces:
+   74 │                 continue
+   75 │             current: list[TextSpan] = []
+   76 │ 
+   77 │             def flush(reason: str) -> None:
+   78 │                 nonlocal current
+   79 │                 if not current:
+   80 │                     return
+   81 │                 start = current[0].start
+   82 │                 end = current[-1].end
+   83 │                 blocks.extend(self._finalize_span(source, start, end, reason))
+   84 │                 current = []
+   85 │ 
+   86 │             for piece in pieces:
+   87 │                 if len(piece.text) > self.max_chars:
+   88 │                     flush("paragraph_boundary")
+   89 │                     blocks.extend(self._split_long_span(source, piece.start, piece.end))
+   90 │                     continue
+   91 │                 candidate_len = piece.end - current[0].start if current else len(piece.text)
+   92 │                 if current and candidate_len > self.target_chars:
+   93 │                     flush("paragraph_boundary")
+   94 │                 current.append(piece)
+   95 │             flush("scene_boundary" if scene.reason == "scene_separator" else "paragraph_boundary")
+   96 │         return blocks
+   97 │ 
+   98 │     def _scene_spans(self, text: str) -> list[TextSpan]:
+   99 │         separators = list(re.finditer(r"(?m)^\s*(?:[-*_=\u2014]{3,}|#{3,}|第[一二三四五六七八九十百千万\d]+幕)\s*$", text))
+  100 │         if not separators:
+  101 │             return self._finalize_span(text, 0, len(text), "chapter")
+  102 │ 
+  103 │         spans: list[TextSpan] = []
+  104 │         cursor = 0
+  105 │         for match in separators:
+  106 │             spans.extend(self._finalize_span(text, cursor, match.start(), "scene_separator"))
+  107 │             cursor = match.end()
+  108 │         spans.extend(self._finalize_span(text, cursor, len(text), "scene_separator"))
+  109 │         return spans
+  110 │ 
+  111 │     def _paragraph_spans(self, text: str, start: int, end: int) -> list[TextSpan]:
+  112 │         segment = text[start:end]
+  113 │         spans: list[TextSpan] = []
+  114 │         for match in re.finditer(r"\S(?:.*?)(?=(?:\r?\n\s*\r?\n)|\Z)", segment, flags=re.DOTALL):
+  115 │             span_start = start + match.start()
+  116 │             span_end = start + match.end()
+  117 │             spans.extend(self._finalize_span(text, span_start, span_end, "paragraph"))
+  118 │         return spans
+  119 │ 
+  120 │     def _split_long_span(self, text: str, start: int, end: int) -> list[TextSpan]:
+  121 │         spans: list[TextSpan] = []
+  122 │         cursor = start
+  123 │         while cursor < end:
+  124 │             remaining = end - cursor
+  125 │             if remaining <= self.max_chars:
+  126 │                 spans.extend(self._finalize_span(text, cursor, end, "sentence_boundary"))
+  127 │                 break
+  128 │             cut = self._sentence_cut(text, cursor, min(end, cursor + self.max_chars))
+  129 │             if cut <= cursor:
+  130 │                 cut = min(end, cursor + self.max_chars)
+  131 │                 reason = "hard_limit"
+  132 │             else:
+  133 │                 reason = "sentence_boundary"
+  134 │             spans.extend(self._finalize_span(text, cursor, cut, reason))
+  135 │             cursor = cut
+  136 │         return spans
+  137 │ 
+  138 │     def _sentence_cut(self, text: str, start: int, hard_end: int) -> int:
+  139 │         window = text[start:hard_end]
+  140 │         cut = -1
+  141 │         for mark in ("。", "！", "？", ".", "!", "?", "\n"):
+  142 │             cut = max(cut, window.rfind(mark))
+  143 │         if cut < self.min_sentence_cut_chars:
+  144 │             return -1
+  145 │         return start + cut + 1
+  146 │ 
+  147 │     @staticmethod
+  148 │     def _finalize_span(text: str, start: int, end: int, reason: str) -> list[TextSpan]:
+  149 │         start = max(0, int(start))
+  150 │         end = max(start, int(end))
+  151 │         while start < end and text[start].isspace():
+  152 │             start += 1
+  153 │         while end > start and text[end - 1].isspace():
+  154 │             end -= 1
+  155 │         if start >= end:
+  156 │             return []
+  157 │         return [TextSpan(start=start, end=end, text=text[start:end], reason=reason)]
+  158 │ 
+  159 │     @staticmethod
+  160 │     def _int_or_none(value: Any) -> int | None:
+  161 │         try:
+  162 │             return int(value)
+  163 │         except (TypeError, ValueError):
+  164 │             return None
+  165 │ 
+  166 │     def _apply_overlap_window(self, blocks: list[SemanticBlock]) -> list[SemanticBlock]:
+  167 │         """为每个 block 添加前一个 block 末尾的 overlap_sentences 个句子作为重叠上下文。
+  168 │ 
+  169 │         重叠文本存储在 block.metadata["overlap_prefix"] 中，
+  170 │         不修改 block 的 char_start/char_end/content_hash，以保持幂等性。
+  171 │         """
+  172 │         result: list[SemanticBlock] = [blocks[0]]
+  173 │         for i in range(1, len(blocks)):
+  174 │             prev_text = str(blocks[i - 1].text or "")
+  175 │             overlap_text = self._extract_trailing_sentences(prev_text, self.overlap_sentences)
+  176 │             if overlap_text:
+  177 │                 new_metadata = dict(blocks[i].metadata or {})
+  178 │                 new_metadata["overlap_prefix"] = overlap_text
+  179 │                 new_metadata["overlap_source_block_uid"] = blocks[i - 1].block_uid
+  180 │                 new_block = SemanticBlock(
+  181 │                     book_id=blocks[i].book_id,
+  182 │                     block_uid=blocks[i].block_uid,
+  183 │                     chunk_id=blocks[i].chunk_id,
+  184 │                     chunk_index=blocks[i].chunk_index,
+  185 │                     chapter_id=blocks[i].chapter_id,
+  186 │                     chapter_title=blocks[i].chapter_title,
+  187 │                     char_start=blocks[i].char_start,
+  188 │                     char_end=blocks[i].char_end,
+  189 │                     text=blocks[i].text,
+  190 │                     content_hash=blocks[i].content_hash,
+  191 │                     structure_hash=blocks[i].structure_hash,
+  192 │                     pipeline_version=blocks[i].pipeline_version,
+  193 │                     metadata=new_metadata,
+  194 │                 )
+  195 │                 result.append(new_block)
+  196 │             else:
+  197 │                 result.append(blocks[i])
+  198 │         return result
+  199 │ 
+  200 │     @staticmethod
+  201 │     def _extract_trailing_sentences(text: str, count: int) -> str:
+  202 │         """从文本末尾提取最后 count 个句子。"""
+  203 │         if not text or count <= 0:
+  204 │             return ""
+  205 │         # 按中文/英文句号、感叹号、问号分句
+  206 │         sentences = re.split(r"(?<=[。！？.!?])", text)
+  207 │         sentences = [s.strip() for s in sentences if s.strip()]
+  208 │         if not sentences:
+  209 │             return ""
+  210 │         trailing = sentences[-count:]
+  211 │         return "".join(trailing)
+
+────────────────────────────────────────────────────────────────────────
+  📄 novel_app/analysis/mention_extractor.py
+  📝 M2 实体提及抽取（规则+LLM 双通道）
+
+────────────────────────────────────────────────────────────────────────
+    1 │ from __future__ import annotations
+    2 │ 
+    3 │ import re
+    4 │ from collections.abc import Iterable
+    5 │ from dataclasses import dataclass
+    6 │ from typing import Any
+    7 │ 
+    8 │ from novel_app.analysis.entity_resolver import normalize_entity_alias, normalize_entity_type
+    9 │ from novel_app.analysis.schemas_v3 import EntityMentionCandidate
+   10 │ from novel_app.database import Database
+   11 │ 
+   12 │ MENTION_MIN_CONFIDENCE = 0.55
+   13 │ 
+   14 │ _QUOTE_PATTERNS = (
+   15 │     ("quoted_title", re.compile(r"《([^》]{2,40})》")),
+   16 │     ("quoted_name", re.compile(r"[“「『\"]([^”」』\"\n]{2,32})[”」』\"]")),
+   17 │ )
+   18 │ _PUNCTUATION_RE = re.compile(r"[，。！？、；：,.!?;:\n\r\t]")
+   19 │ _SUFFIX_RE = re.compile(
+   20 │     r"[\u4e00-\u9fff]{1,12}(?:"
+   21 │     r"宗门|门派|宗|派|阁|楼|宫|城|国|谷|山|院|司|会|盟|族|军|卫|队|殿|府|塔|"
+   22 │     r"秘境|洞天|世界|大陆|界|域|"
+   23 │     r"灵根|境界|体系|规则|功法|剑法|心法|法诀|功|法|诀|"
+   24 │     r"剑|刀|珠|鼎|镜|令|印|阵|符|丹"
+   25 │     r")"
+   26 │ )
+   27 │ _TRIM_PREFIXES = (
+   28 │     "主角获得",
+   29 │     "主角使用",
+   30 │     "众人进入",
+   31 │     "他们进入",
+   32 │     "她们进入",
+   33 │     "他进入",
+   34 │     "她进入",
+   35 │     "随后获得",
+   36 │     "随后使用",
+   37 │     "进入",
+   38 │     "拜入",
+   39 │     "加入",
+   40 │     "来到",
+   41 │     "来自",
+   42 │     "前往",
+   43 │     "抵达",
+   44 │     "攻打",
+   45 │     "创建",
+   46 │     "建立",
+   47 │     "发现",
+   48 │     "获得",
+   49 │     "使用",
+   50 │     "祭出",
+   51 │     "修炼",
+   52 │     "参悟",
+   53 │ )
+   54 │ 
+   55 │ 
+   56 │ @dataclass(frozen=True)
+   57 │ class MentionSeed:
+   58 │     text: str
+   59 │     entity_type: str
+   60 │     source_rule: str
+   61 │     confidence: float
+   62 │     metadata: dict[str, Any]
+   63 │ 
+   64 │ 
+   65 │ class MentionExtractor:
+   66 │     def __init__(self, seeds: Iterable[MentionSeed] | None = None, *, min_confidence: float = MENTION_MIN_CONFIDENCE)...
+   67 │         self.seeds = tuple(seed for seed in (seeds or ()) if normalize_entity_alias(seed.text))
+   68 │         self.min_confidence = max(0.0, min(1.0, float(min_confidence)))
+   69 │         self._llm_extractor: LLMentionExtractor | None = None
+   70 │ 
+   71 │     def enable_llm(self, llm_extractor: LLMentionExtractor) -> None:
+   72 │         """启用 LLM 增强抽取。传入 LLMentionExtractor 实例。"""
+   73 │         self._llm_extractor = llm_extractor
+   74 │ 
+   75 │     @classmethod
+   76 │     def from_database(cls, database: Database, book_id: int, *, min_confidence: float = MENTION_MIN_CONFIDENCE) -> Me...
+   77 │         seeds: list[MentionSeed] = []
+   78 │         for character in database.list_characters(int(book_id)):
+   79 │             name = str(character["name"] or "").strip()
+   80 │             if name:
+   81 │                 seeds.append(
+   82 │                     MentionSeed(
+   83 │                         text=name,
+   84 │                         entity_type="character",
+   85 │                         source_rule="formal_character",
+   86 │                         confidence=0.95,
+   87 │                         metadata={"source_table": "characters", "source_id": int(character["id"])},
+   88 │                     )
+   89 │                 )
+   90 │         for entry in database.list_world_entries(int(book_id)):
+   91 │             entry_id = int(entry.get("id") or 0)
+   92 │             if entry_id <= 0:
+   93 │                 continue
+   94 │             name = str(entry.get("name") or "").strip()
+   95 │             if name:
+   96 │                 seeds.append(
+   97 │                     MentionSeed(
+   98 │                         text=name,
+   99 │                         entity_type=_world_category_type(str(entry.get("category") or "")),
+  100 │                         source_rule="formal_world_entry",
+  101 │                         confidence=0.9,
+  102 │                         metadata={"source_table": "world_entries", "source_id": entry_id},
+  103 │                     )
+  104 │                 )
+  105 │         return cls(seeds, min_confidence=min_confidence)
+  106 │ 
+  107 │     def extract_from_blocks(
+  108 │         self,
+  109 │         *,
+  110 │         book_id: int,
+  111 │         run_id: int,
+  112 │         blocks: Iterable[Any],
+  113 │     ) -> list[EntityMentionCandidate]:
+  114 │         by_key: dict[tuple[str, int, int, str, str], EntityMentionCandidate] = {}
+  115 │         for block in blocks:
+  116 │             block_data = _block_dict(block)
+  117 │             text = str(block_data.get("text") or "")
+  118 │             if not text:
+  119 │                 continue
+  120 │             for candidate in self._seed_mentions(book_id, run_id, block_data, text):
+  121 │                 self._keep_best(by_key, candidate)
+  122 │             for candidate in self._quoted_mentions(book_id, run_id, block_data, text):
+  123 │                 self._keep_best(by_key, candidate)
+  124 │             for candidate in self._suffix_mentions(book_id, run_id, block_data, text):
+  125 │                 self._keep_best(by_key, candidate)
+  126 │ 
+  127 │         # LLM 增强抽取：对规则未覆盖的 block 调用 LLM 补充
+  128 │         if self._llm_extractor is not None:
+  129 │             llm_candidates = self._llm_extractor.extract(
+  130 │                 book_id=book_id,
+  131 │                 run_id=run_id,
+  132 │                 blocks=list(blocks),
+  133 │                 existing_candidates=dict(by_key),
+  134 │             )
+  135 │             for candidate in llm_candidates:
+  136 │                 self._keep_best(by_key, candidate)
+  137 │ 
+  138 │         return sorted(by_key.values(), key=lambda item: (item.chapter_id or 0, item.char_start, item.char_end, item.n...
+  139 │ 
+  140 │     def _seed_mentions(
+  141 │         self,
+  142 │         book_id: int,
+  143 │         run_id: int,
+  144 │         block: dict[str, Any],
+  145 │         text: str,
+  146 │     ) -> Iterable[EntityMentionCandidate]:
+  147 │         for seed in self.seeds:
+  148 │             if seed.confidence < self.min_confidence:
+  149 │                 continue
+  150 │             for match in re.finditer(re.escape(seed.text), text, flags=re.IGNORECASE):
+  151 │                 yield self._candidate(
+  152 │                     book_id=book_id,
+  153 │                     run_id=run_id,
+  154 │                     block=block,
+  155 │                     text=text,
+  156 │                     local_start=match.start(),
+  157 │                     local_end=match.end(),
+  158 │                     entity_type=seed.entity_type,
+  159 │                     confidence=seed.confidence,
+  160 │                     source_rule=seed.source_rule,
+  161 │                     metadata=seed.metadata,
+  162 │                 )
+  163 │ 
+  164 │     def _quoted_mentions(
+  165 │         self,
+  166 │         book_id: int,
+  167 │         run_id: int,
+  168 │         block: dict[str, Any],
+  169 │         text: str,
+  170 │     ) -> Iterable[EntityMentionCandidate]:
+  171 │         for source_rule, pattern in _QUOTE_PATTERNS:
+  172 │             for match in pattern.finditer(text):
+  173 │                 value = str(match.group(1) or "").strip()
+  174 │                 if not _looks_like_entity_name(value):
+  175 │                     continue
+  176 │                 confidence = 0.72 if source_rule == "quoted_title" else 0.62
+  177 │                 if confidence < self.min_confidence:
+  178 │                     continue
+  179 │                 yield self._candidate(
+  180 │                     book_id=book_id,
+  181 │                     run_id=run_id,
+  182 │                     block=block,
+  183 │                     text=text,
+  184 │                     local_start=match.start(1),
+  185 │                     local_end=match.end(1),
+  186 │                     entity_type="concept",
+  187 │                     confidence=confidence,
+  188 │                     source_rule=source_rule,
+  189 │                     metadata={},
+  190 │                 )
+  191 │ 
+  192 │     def _suffix_mentions(
+  193 │         self,
+  194 │         book_id: int,
+  195 │         run_id: int,
+  196 │         block: dict[str, Any],
+  197 │         text: str,
+  198 │     ) -> Iterable[EntityMentionCandidate]:
+  199 │         for match in _SUFFIX_RE.finditer(text):
+  200 │             value, offset = _clean_suffix_value(match.group(0))
+  201 │             if not _looks_like_entity_name(value):
+  202 │                 continue
+  203 │             confidence = 0.58
+  204 │             if confidence < self.min_confidence:
+  205 │                 continue
+  206 │             local_start = match.start() + offset
+  207 │             local_end = local_start + len(value)
+  208 │             yield self._candidate(
+  209 │                 book_id=book_id,
+  210 │                 run_id=run_id,
+  211 │                 block=block,
+  212 │                 text=text,
+  213 │                 local_start=local_start,
+  214 │                 local_end=local_end,
+  215 │                 entity_type=_suffix_type(value),
+  216 │                 confidence=confidence,
+  217 │                 source_rule="suffix_pattern",
+  218 │                 metadata={},
+  219 │             )
+  220 │ 
+  221 │     def _candidate(
+  222 │         self,
+  223 │         *,
+  224 │         book_id: int,
+  225 │         run_id: int,
+  226 │         block: dict[str, Any],
+  227 │         text: str,
+  228 │         local_start: int,
+  229 │         local_end: int,
+  230 │         entity_type: str,
+  231 │         confidence: float,
+  232 │         source_rule: str,
+  233 │         metadata: dict[str, Any],
+  234 │     ) -> EntityMentionCandidate:
+  235 │         quote_text = text[local_start:local_end]
+  236 │         block_start = _int(block.get("char_start"), 0)
+  237 │         chapter_id = _int_or_none(block.get("chapter_id"))
+  238 │         return EntityMentionCandidate.create(
+  239 │             book_id=book_id,
+  240 │             run_id=run_id,
+  241 │             entity_type=normalize_entity_type(entity_type, "concept"),
+  242 │             normalized_text=normalize_entity_alias(quote_text),
+  243 │             quote_text=quote_text,
+  244 │             chapter_id=chapter_id,
+  245 │             block_uid=str(block.get("block_uid") or ""),
+  246 │             char_start=block_start + int(local_start),
+  247 │             char_end=block_start + int(local_end),
+  248 │             confidence=confidence,
+  249 │             source_rule=source_rule,
+  250 │             metadata={
+  251 │                 **metadata,
+  252 │                 "block_local_start": int(local_start),
+  253 │                 "block_local_end": int(local_end),
+  254 │             },
+  255 │         )
+  256 │ 
+  257 │     @staticmethod
+  258 │     def _keep_best(
+  259 │         by_key: dict[tuple[str, int, int, str, str], EntityMentionCandidate],
+  260 │         candidate: EntityMentionCandidate,
+  261 │     ) -> None:
+  262 │         if not candidate.quote_text or candidate.confidence < MENTION_MIN_CONFIDENCE:
+  263 │             return
+  264 │         key = (
+  265 │             candidate.block_uid,
+  266 │             candidate.char_start,
+  267 │             candidate.char_end,
+  268 │             candidate.entity_type,
+  269 │             candidate.normalized_text,
+  270 │         )
+  271 │         existing = by_key.get(key)
+  272 │         if existing is None or candidate.confidence > existing.confidence:
+  273 │             by_key[key] = candidate
+  274 │ 
+  275 │ 
+  276 │ def _block_dict(value: Any) -> dict[str, Any]:
+  277 │     if isinstance(value, dict):
+  278 │         return value
+  279 │     result = dict(value)
+  280 │     if "chapter_id" not in result:
+  281 │         chapter_ids = result.get("chapter_ids")
+  282 │         if isinstance(chapter_ids, list) and chapter_ids:
+  283 │             result["chapter_id"] = chapter_ids[0]
+  284 │     return result
+  285 │ 
+  286 │ 
+  287 │ def _world_category_type(category: str) -> str:
+  288 │     text = str(category or "")
+  289 │     if any(key in text for key in ("人物", "角色")):
+  290 │         return "character"
+  291 │     if any(key in text for key in ("势力", "组织", "宗门", "门派", "家族")):
+  292 │         return "organization"
+  293 │     if any(key in text for key in ("地点", "地理", "城市", "秘境", "地图")):
+  294 │         return "location"
+  295 │     if any(key in text for key in ("物品", "法宝", "道具", "装备")):
+  296 │         return "item"
+  297 │     return "concept"
+  298 │ 
+  299 │ 
+  300 │ def _suffix_type(value: str) -> str:
+  301 │     if value.endswith(("宗门", "门派", "宗", "派", "阁", "楼", "宫", "院", "司", "会", "盟", "族", "军", "卫", "队")):
+  302 │         return "organization"
+  303 │     if value.endswith(("城", "国", "谷", "山", "殿", "府", "塔", "秘境", "洞天", "世界", "大陆", "界", "域")):
+  304 │         return "location"
+  305 │     if value.endswith(("剑", "刀", "珠", "鼎", "镜", "令", "印", "阵", "符", "丹")):
+  306 │         return "item"
+  307 │     return "concept"
+  308 │ 
+  309 │ 
+  310 │ def _clean_suffix_value(value: str) -> tuple[str, int]:
+  311 │     clean = str(value or "").strip()
+  312 │     offset = 0
+  313 │     changed = True
+  314 │     while changed:
+  315 │         changed = False
+  316 │         for prefix in _TRIM_PREFIXES:
+  317 │             if clean.startswith(prefix) and len(clean) > len(prefix) + 1:
+  318 │                 clean = clean[len(prefix):]
+  319 │                 offset += len(prefix)
+  320 │                 changed = True
+  321 │                 break
+  322 │     return clean, offset
+  323 │ 
+  324 │ 
+  325 │ def _looks_like_entity_name(value: str) -> bool:
+  326 │     text = str(value or "").strip()
+  327 │     if len(text) < 2 or len(text) > 40:
+  328 │         return False
+  329 │     if _PUNCTUATION_RE.search(text):
+  330 │         return False
+  331 │     if normalize_entity_alias(text) in {"他说", "她说", "他们说", "这一切", "不知道", "为什么"}:
+  332 │         return False
+  333 │     return bool(normalize_entity_alias(text))
+  334 │ 
+  335 │ 
+  336 │ def _int(value: Any, default: int = 0) -> int:
+  337 │     try:
+  338 │         return int(value)
+  339 │     except (TypeError, ValueError):
+  340 │         return default
+  341 │ 
+  342 │ 
+  343 │ def _int_or_none(value: Any) -> int | None:
+  344 │     try:
+  345 │         return int(value)
+  346 │     except (TypeError, ValueError):
+  347 │         return None
+  348 │ 
+  349 │ 
+  350 │ class LLMentionExtractor:
+  351 │     """LLM 增强实体提及抽取的抽象基类。
+  352 │ 
+  353 │     子类需要实现 `extract()` 方法，调用 LLM 对文本块进行提及抽取，
+  354 │     返回 EntityMentionCandidate 列表。LLM 抽取结果只进候选池，
+  355 │     不直接写入正式层。
+  356 │ 
+  357 │     使用方式：
+  358 │         extractor = MentionExtractor.from_database(db, book_id)
+  359 │         extractor.enable_llm(MyLLMentionExtractor(ai_service, llm_cache))
+  360 │         mentions = extractor.extract_from_blocks(...)
+  361 │     """
+  362 │ 
+  363 │     def extract(
+  364 │         self,
+  365 │         *,
+  366 │         book_id: int,
+  367 │         run_id: int,
+  368 │         blocks: list[Any],
+  369 │         existing_candidates: dict[tuple[str, int, int, str, str], EntityMentionCandidate],
+  370 │     ) -> list[EntityMentionCandidate]:
+  371 │         """调用 LLM 对 blocks 进行提及抽取，返回新的候选列表。
+  372 │ 
+  373 │         默认实现返回空列表（不调用 LLM）。子类应重写此方法。
+  374 │         """
+  375 │         return []
+
+────────────────────────────────────────────────────────────────────────
+  📄 novel_app/analysis/coreference.py
+  📝 M3 两级共指消解（同名聚类+称谓链+跨章合并）
+
+────────────────────────────────────────────────────────────────────────
+    1 │ """实体共指消解 — 章内同名聚类 + 跨章合并 + 称谓链消解。
+    2 │ 
+    3 │ Phase 1: 同名/规范化同名聚类（原有逻辑）
+    4 │ Phase 2: 称谓链消解（师父→他、师姐→她等代词/称谓关联）
+    5 │ Phase 3: 跨章合并（名称相似 + 别名显式 + 时间线不冲突）
+    6 │ """
+    7 │ from __future__ import annotations
+    8 │ 
+    9 │ from collections import defaultdict
+   10 │ from collections.abc import Iterable
+   11 │ from typing import Any
+   12 │ 
+   13 │ from novel_app.analysis.entity_resolver import normalize_entity_alias, normalize_entity_type, stable_entity_uid
+   14 │ from novel_app.analysis.schemas_v3 import ANALYSIS_V3_SCHEMA_VERSION, ResolvedEntityCandidate
+   15 │ 
+   16 │ # ---------------------------------------------------------------------------
+   17 │ # 称谓链规则：代词/称谓 → 可能指向的实体类型
+   18 │ # ---------------------------------------------------------------------------
+   19 │ _APPELLATION_PATTERNS: list[tuple[str, str, float]] = [
+   20 │     # (称谓关键词, 推断的实体类型, 置信度加成)
+   21 │     ("师父", "character", 0.15),
+   22 │     ("师傅", "character", 0.15),
+   23 │     ("师尊", "character", 0.15),
+   24 │     ("师叔", "character", 0.12),
+   25 │     ("师伯", "character", 0.12),
+   26 │     ("师姐", "character", 0.12),
+   27 │     ("师妹", "character", 0.12),
+   28 │     ("师兄", "character", 0.12),
+   29 │     ("师弟", "character", 0.12),
+   30 │     ("道友", "character", 0.08),
+   31 │     ("前辈", "character", 0.08),
+   32 │     ("晚辈", "character", 0.08),
+   33 │     ("掌门", "character", 0.10),
+   34 │     ("长老", "character", 0.10),
+   35 │     ("阁主", "character", 0.10),
+   36 │     ("城主", "character", 0.10),
+   37 │     ("族长", "character", 0.10),
+   38 │     ("父亲", "character", 0.15),
+   39 │     ("母亲", "character", 0.15),
+   40 │     ("兄长", "character", 0.12),
+   41 │     ("姐姐", "character", 0.12),
+   42 │     ("弟弟", "character", 0.12),
+   43 │     ("妹妹", "character", 0.12),
+   44 │     ("爷爷", "character", 0.15),
+   45 │     ("奶奶", "character", 0.15),
+   46 │ ]
+   47 │ 
+   48 │ # 名称相似度阈值：编辑距离 / max(len_a, len_b) < 此值视为相似
+   49 │ _NAME_SIMILARITY_THRESHOLD = 0.45
+   50 │ 
+   51 │ 
+   52 │ class CoreferenceResolver:
+   53 │     def __init__(self, vector_store: Any | None = None) -> None:
+   54 │         self._vector_store = vector_store
+   55 │ 
+   56 │     def resolve_mentions(
+   57 │         self,
+   58 │         *,
+   59 │         book_id: int,
+   60 │         mentions: Iterable[dict[str, Any]],
+   61 │     ) -> list[ResolvedEntityCandidate]:
+   62 │         mention_list = list(mentions)
+   63 │ 
+   64 │         # Phase 1: 同名/规范化同名聚类
+   65 │         buckets = self._phase1_same_name_clustering(book_id, mention_list)
+   66 │ 
+   67 │         # Phase 2: 称谓链消解 — 将称谓型 mention 关联到最近的同名实体
+   68 │         self._phase2_appellation_linking(buckets, mention_list)
+   69 │ 
+   70 │         # Phase 3: 跨章合并 — 名称相似 + 别名显式 + 时间线不冲突
+   71 │         buckets = self._phase3_cross_chapter_merge(buckets, book_id)
+   72 │ 
+   73 │         # 构建最终实体列表
+   74 │         entities: list[ResolvedEntityCandidate] = []
+   75 │         for (entity_type, normalized), bucket in buckets.items():
+   76 │             quotes = [str(item.get("quote_text") or "").strip() for item in bucket if str(item.get("quote_text") or "...
+   77 │             if not quotes:
+   78 │                 continue
+   79 │             canonical = self._canonical_name(quotes)
+   80 │             aliases = tuple(sorted({quote for quote in quotes if quote != canonical}))
+   81 │             confidences = [float(item.get("confidence") or 0.0) for item in bucket]
+   82 │             confidence = round(sum(confidences) / max(1, len(confidences)), 3)
+   83 │             mention_uids = tuple(str(item.get("mention_uid") or "") for item in bucket if str(item.get("mention_uid")...
+   84 │             source_rule = self._source_rule(bucket)
+   85 │             entity_uid = stable_entity_uid(entity_type, canonical or normalized, book_id=book_id)
+   86 │             chapter_ids = sorted({
+   87 │                 int(item.get("chapter_id") or 0)
+   88 │                 for item in bucket
+   89 │                 if _int_or_none(item.get("chapter_id")) is not None
+   90 │             })
+   91 │             entities.append(
+   92 │                 ResolvedEntityCandidate(
+   93 │                     entity_uid=entity_uid,
+   94 │                     entity_type=entity_type,
+   95 │                     canonical_name=canonical,
+   96 │                     aliases=aliases,
+   97 │                     mention_uids=mention_uids,
+   98 │                     confidence=confidence,
+   99 │                     status="candidate",
+  100 │                     source_rule=source_rule,
+  101 │                     metadata={
+  102 │                         "schema_version": ANALYSIS_V3_SCHEMA_VERSION,
+  103 │                         "normalized_text": normalized,
+  104 │                         "mention_count": len(mention_uids),
+  105 │                         "chapter_ids": chapter_ids,
+  106 │                         "source_rules": sorted({str(item.get("source_rule") or "") for item in bucket if str(item.get...
+  107 │                     },
+  108 │                 )
+  109 │             )
+  110 │         return sorted(entities, key=lambda item: (item.entity_type, item.canonical_name, item.entity_uid))
+  111 │ 
+  112 │     # ------------------------------------------------------------------
+  113 │     # Phase 1: 同名/规范化同名聚类
+  114 │     # ------------------------------------------------------------------
+  115 │ 
+  116 │     def _phase1_same_name_clustering(
+  117 │         self,
+  118 │         book_id: int,
+  119 │         mentions: list[dict[str, Any]],
+  120 │     ) -> dict[tuple[str, str], list[dict[str, Any]]]:
+  121 │         buckets: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+  122 │         for mention in mentions:
+  123 │             entity_type = normalize_entity_type(mention.get("entity_type"), "concept")
+  124 │             normalized = normalize_entity_alias(mention.get("normalized_text") or mention.get("quote_text"))
+  125 │             if not normalized:
+  126 │                 continue
+  127 │             buckets[(entity_type, normalized)].append(dict(mention))
+  128 │         return buckets
+  129 │ 
+  130 │     # ------------------------------------------------------------------
+  131 │     # Phase 2: 称谓链消解
+  132 │     # ------------------------------------------------------------------
+  133 │ 
+  134 │     def _phase2_appellation_linking(
+  135 │         self,
+  136 │         buckets: dict[tuple[str, str], list[dict[str, Any]]],
+  137 │         mentions: list[dict[str, Any]],
+  138 │     ) -> None:
+  139 │         """将称谓型 mention（如"师父"、"他"）关联到最近的同名实体候选。
+  140 │ 
+  141 │         策略：对每个称谓 mention，在同一章节内查找最近的、类型匹配的实体候选，
+  142 │         将该 mention 合并到对应 bucket 中。
+  143 │         """
+  144 │         appellation_mentions = self._collect_appellation_mentions(mentions)
+  145 │         if not appellation_mentions:
+  146 │             return
+  147 │ 
+  148 │         # 构建 chapter → 按位置排序的 mention 列表
+  149 │         chapter_mentions: dict[int, list[dict[str, Any]]] = defaultdict(list)
+  150 │         for mention in mentions:
+  151 │             chapter_id = _int_or_none(mention.get("chapter_id"))
+  152 │             if chapter_id is not None:
+  153 │                 chapter_mentions[chapter_id].append(dict(mention))
+  154 │ 
+  155 │         # 为每个 bucket 记录出现位置，方便查找最近实体
+  156 │         bucket_positions: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
+  157 │         for key, bucket in buckets.items():
+  158 │             for item in bucket:
+  159 │                 chapter_id = _int_or_none(item.get("chapter_id"))
+  160 │                 char_start = int(item.get("char_start") or 0)
+  161 │                 if chapter_id is not None:
+  162 │                     bucket_positions[key].append((chapter_id, char_start))
+  163 │ 
+  164 │         for appellation in appellation_mentions:
+  165 │             chapter_id = _int_or_none(appellation.get("chapter_id"))
+  166 │             if chapter_id is None:
+  167 │                 continue
+  168 │             char_start = int(appellation.get("char_start") or 0)
+  169 │             appellation_type = str(appellation.get("entity_type") or "character")
+  170 │             best_key: tuple[str, str] | None = None
+  171 │             best_distance = float("inf")
+  172 │ 
+  173 │             for key, positions in bucket_positions.items():
+  174 │                 key_type = key[0]
+  175 │                 if key_type != appellation_type:
+  176 │                     continue
+  177 │                 for pos_chapter, pos_char in positions:
+  178 │                     if pos_chapter != chapter_id:
+  179 │                         continue
+  180 │                     distance = abs(pos_char - char_start)
+  181 │                     if distance < best_distance:
+  182 │                         best_distance = distance
+  183 │                         best_key = key
+  184 │ 
+  185 │             if best_key is not None and best_distance < 500:
+  186 │                 buckets[best_key].append(appellation)
+  187 │ 
+  188 │     def _collect_appellation_mentions(self, mentions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  189 │         """收集称谓型 mention（quote_text 匹配称谓模式的）。"""
+  190 │         result: list[dict[str, Any]] = []
+  191 │         for mention in mentions:
+  192 │             quote = str(mention.get("quote_text") or "").strip()
+  193 │             if not quote:
+  194 │                 continue
+  195 │             for pattern_text, _entity_type, _ in _APPELLATION_PATTERNS:
+  196 │                 if quote == pattern_text or quote.endswith(pattern_text):
+  197 │                     result.append(dict(mention))
+  198 │                     break
+  199 │         return result
+  200 │ 
+  201 │     # ------------------------------------------------------------------
+  202 │     # Phase 3: 跨章合并
+  203 │     # ------------------------------------------------------------------
+  204 │ 
+  205 │     def _phase3_cross_chapter_merge(
+  206 │         self,
+  207 │         buckets: dict[tuple[str, str], list[dict[str, Any]]],
+  208 │         book_id: int,
+  209 │     ) -> dict[tuple[str, str], list[dict[str, Any]]]:
+  210 │         """合并跨章的同实体候选。
+  211 │ 
+  212 │         合并条件（全部满足）：
+  213 │         1. 同一 entity_type
+  214 │         2. 名称相似度超过阈值（编辑距离），或一方是另一方的别名/子串
+  215 │         3. 时间线不冲突（两个候选的 chapter_ids 不重叠，或重叠但 quote_text 不矛盾）
+  216 │         """
+  217 │         keys = list(buckets.keys())
+  218 │         merged: set[tuple[str, str]] = set()
+  219 │         merges: list[tuple[tuple[str, str], tuple[str, str]]] = []
+  220 │ 
+  221 │         for i, key_a in enumerate(keys):
+  222 │             if key_a in merged:
+  223 │                 continue
+  224 │             for j in range(i + 1, len(keys)):
+  225 │                 key_b = keys[j]
+  226 │                 if key_b in merged:
+  227 │                     continue
+  228 │                 if key_a[0] != key_b[0]:
+  229 │                     continue
+  230 │                 if self._should_merge_buckets(buckets[key_a], buckets[key_b]):
+  231 │                     merges.append((key_a, key_b))
+  232 │                     merged.add(key_b)
+  233 │ 
+  234 │         # 执行合并
+  235 │         for key_a, key_b in merges:
+  236 │             buckets[key_a].extend(buckets.pop(key_b, []))
+  237 │ 
+  238 │         return buckets
+  239 │ 
+  240 │     def _should_merge_buckets(
+  241 │         self,
+  242 │         bucket_a: list[dict[str, Any]],
+  243 │         bucket_b: list[dict[str, Any]],
+  244 │     ) -> bool:
+  245 │         """判断两个 bucket 是否应该合并。"""
+  246 │         names_a = {str(item.get("quote_text") or "").strip() for item in bucket_a}
+  247 │         names_b = {str(item.get("quote_text") or "").strip() for item in bucket_b}
+  248 │ 
+  249 │         # 条件 1: 别名显式 — 一方的 quote 是另一方的子串或别名
+  250 │         for name_a in names_a:
+  251 │             for name_b in names_b:
+  252 │                 if not name_a or not name_b:
+  253 │                     continue
+  254 │                 if name_a == name_b:
+  255 │                     return True
+  256 │                 short, long = (name_a, name_b) if len(name_a) < len(name_b) else (name_b, name_a)
+  257 │                 if len(short) >= 2 and long.startswith(short):
+  258 │                     return True
+  259 │ 
+  260 │         # 条件 2: 名称相似度
+  261 │         for name_a in names_a:
+  262 │             for name_b in names_b:
+  263 │                 if not name_a or not name_b:
+  264 │                     continue
+  265 │                 if _name_similarity(name_a, name_b) >= (1.0 - _NAME_SIMILARITY_THRESHOLD):
+  266 │                     return True
+  267 │ 
+  268 │         # 条件 3: 向量相似度辅助 — 如果两个 bucket 的上下文向量高度相似，也合并
+  269 │         if self._vector_store is not None:
+  270 │             try:
+  271 │                 vector_score = self._vector_similarity_score(bucket_a, bucket_b)
+  272 │                 if vector_score >= 0.75:
+  273 │                     return True
+  274 │             except Exception:
+  275 │                 pass
+  276 │ 
+  277 │         return False
+  278 │ 
+  279 │     def _vector_similarity_score(
+  280 │         self,
+  281 │         bucket_a: list[dict[str, Any]],
+  282 │         bucket_b: list[dict[str, Any]],
+  283 │     ) -> float:
+  284 │         """利用向量存储计算两个 bucket 的上下文相似度。"""
+  285 │         if not self._vector_store:
+  286 │             return 0.0
+  287 │         # 取每个 bucket 的第一个 mention 的 quote_text 作为查询
+  288 │         quote_a = str(bucket_a[0].get("quote_text") or "").strip() if bucket_a else ""
+  289 │         quote_b = str(bucket_b[0].get("quote_text") or "").strip() if bucket_b else ""
+  290 │         if not quote_a or not quote_b:
+  291 │             return 0.0
+  292 │         book_id = int(bucket_a[0].get("book_id") or 0)
+  293 │         if not book_id:
+  294 │             return 0.0
+  295 │         # 用 quote_a 搜索 entity_summaries，看是否命中 bucket_b 的实体
+  296 │         results_a = self._vector_store.search_similar_entities(book_id, quote_a, top_k=3, score_threshold=0.5)
+  297 │         results_b = self._vector_store.search_similar_entities(book_id, quote_b, top_k=3, score_threshold=0.5)
+  298 │         # 如果两者的搜索结果有重叠（命中同一实体），说明上下文相似
+  299 │         uids_a = {r.get("payload", {}).get("entity_uid") for r in results_a}
+  300 │         uids_b = {r.get("payload", {}).get("entity_uid") for r in results_b}
+  301 │         overlap = uids_a & uids_b
+  302 │         if overlap:
+  303 │             # 取重叠实体的最高分数
+  304 │             max_score = 0.0
+  305 │             for r in results_a + results_b:
+  306 │                 if r.get("payload", {}).get("entity_uid") in overlap:
+  307 │                     max_score = max(max_score, r.get("score", 0.0))
+  308 │             return min(1.0, max_score)
+  309 │         return 0.0
+  310 │ 
+  311 │     # ------------------------------------------------------------------
+  312 │     # 工具方法
+  313 │     # ------------------------------------------------------------------
+  314 │ 
+  315 │     @staticmethod
+  316 │     def _canonical_name(quotes: list[str]) -> str:
+  317 │         counts: dict[str, int] = defaultdict(int)
+  318 │         for quote in quotes:
+  319 │             counts[quote] += 1
+  320 │         return sorted(counts, key=lambda item: (-counts[item], -len(item), item))[0]
+  321 │ 
+  322 │     @staticmethod
+  323 │     def _source_rule(mentions: list[dict[str, Any]]) -> str:
+  324 │         counts: dict[str, int] = defaultdict(int)
+  325 │         for mention in mentions:
+  326 │             source_rule = str(mention.get("source_rule") or "auto_coreference")
+  327 │             counts[source_rule] += 1
+  328 │         return sorted(counts, key=lambda item: (-counts[item], item))[0] if counts else "auto_coreference"
+  329 │ 
+  330 │ 
+  331 │ # ---------------------------------------------------------------------------
+  332 │ # 工具函数
+  333 │ # ---------------------------------------------------------------------------
+  334 │ 
+  335 │ def _name_similarity(a: str, b: str) -> float:
+  336 │     """计算两个名称的相似度（0~1），基于编辑距离。"""
+  337 │     if not a or not b:
+  338 │         return 0.0
+  339 │     if a == b:
+  340 │         return 1.0
+  341 │     dist = _edit_distance(a, b)
+  342 │     max_len = max(len(a), len(b))
+  343 │     return 1.0 - (dist / max_len)
+  344 │ 
+  345 │ 
+  346 │ def _edit_distance(a: str, b: str) -> int:
+  347 │     """Levenshtein 编辑距离。"""
+  348 │     n, m = len(a), len(b)
+  349 │     if n == 0:
+  350 │         return m
+  351 │     if m == 0:
+  352 │         return n
+  353 │     prev = list(range(m + 1))
+  354 │     curr = [0] * (m + 1)
+  355 │     for i in range(1, n + 1):
+  356 │         curr[0] = i
+  357 │         for j in range(1, m + 1):
+  358 │             cost = 0 if a[i - 1] == b[j - 1] else 1
+  359 │             curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+  360 │         prev, curr = curr, prev
+  361 │     return prev[m]
+  362 │ 
+  363 │ 
+  364 │ def _int_or_none(value: Any) -> int | None:
+  365 │     try:
+  366 │         result = int(value)
+  367 │     except (TypeError, ValueError):
+  368 │         return None
+  369 │     return result if result > 0 else None
+
+────────────────────────────────────────────────────────────────────────
+  📄 novel_app/analysis/entity_resolver.py
+  📝 实体解析工具（规范化、稳定UID生成）
+
+────────────────────────────────────────────────────────────────────────
+    1 │ from __future__ import annotations
+    2 │ 
+    3 │ import hashlib
+    4 │ import re
+    5 │ import unicodedata
+    6 │ from dataclasses import dataclass
+    7 │ from typing import Any
+    8 │ 
+    9 │ from novel_app.analysis.evidence import extract_evidence_refs
+   10 │ 
+   11 │ CHARACTER_CONTAINERS = (
+   12 │     "characters",
+   13 │     "character_cards",
+   14 │     "character_profiles",
+   15 │     "character_profile",
+   16 │     "character_data",
+   17 │ )
+   18 │ WORLD_CONTAINERS = (
+   19 │     "world_entries",
+   20 │     "world",
+   21 │     "worldbuilding",
+   22 │     "world_elements",
+   23 │     "locations",
+   24 │     "organizations",
+   25 │     "items",
+   26 │     "concepts",
+   27 │ )
+   28 │ NAME_KEYS = ("name", "title", "label", "character_name", "entity_name", "target_entity")
+   29 │ ALIAS_KEYS = ("alias", "aliases", "aka", "also_known_as", "nicknames", "other_names")
+   30 │ ROLE_KEYS = ("role", "character_role", "position", "category", "type", "kind")
+   31 │ IGNORED_MAP_KEYS = {"fields", "metadata", "_meta", "evidence", "evidence_refs", "source_requests"}
+   32 │ 
+   33 │ ENTITY_TYPE_PREFIXES = {
+   34 │     "book": "ENT-B",
+   35 │     "character": "ENT-P",
+   36 │     "person": "ENT-P",
+   37 │     "location": "ENT-L",
+   38 │     "organization": "ENT-O",
+   39 │     "item": "ENT-I",
+   40 │     "concept": "ENT-C",
+   41 │     "world": "ENT-W",
+   42 │     "group": "ENT-G",
+   43 │ }
+   44 │ 
+   45 │ ENTITY_TYPE_ALIASES = {
+   46 │     "char": "character",
+   47 │     "character": "character",
+   48 │     "person": "character",
+   49 │     "people": "character",
+   50 │     "role": "character",
+   51 │     "\u4eba\u7269": "character",
+   52 │     "\u89d2\u8272": "character",
+   53 │     "\u4e3b\u89d2": "character",
+   54 │     "location": "location",
+   55 │     "place": "location",
+   56 │     "\u5730\u70b9": "location",
+   57 │     "\u5730\u540d": "location",
+
+────────────────────────────────────────────────────────────────────────
+  📄 lingshu_api/main.py
+  📝 FastAPI 应用入口（创建配置+启动）
+
+────────────────────────────────────────────────────────────────────────
+    1 │ """
+    2 │ 灵枢统一 FastAPI 应用入口。
+    3 │ 
+    4 │ 启动方式:
+    5 │     uvicorn lingshu_api.main:app --host 0.0.0.0 --port 8787
+    6 │ """
+    7 │ from __future__ import annotations
+    8 │ 
+    9 │ import asyncio
+   10 │ import logging
+   11 │ import os
+   12 │ import sys
+   13 │ from contextlib import asynccontextmanager, suppress
+   14 │ from pathlib import Path
+   15 │ 
+   16 │ from fastapi import FastAPI
+   17 │ from fastapi.middleware.cors import CORSMiddleware
+   18 │ from slowapi import Limiter
+   19 │ from slowapi.errors import RateLimitExceeded
+   20 │ from slowapi.util import get_remote_address
+   21 │ from starlette.responses import JSONResponse
+   22 │ 
+   23 │ # 确保项目根目录在 sys.path 中（开发环境）
+   24 │ _project_root = Path(__file__).resolve().parents[1]
+   25 │ if str(_project_root) not in sys.path:
+   26 │     sys.path.insert(0, str(_project_root))
+   27 │ 
+   28 │ 
+   29 │ DEFAULT_DB_PATH = _project_root / "data" / "bookstore_demo.db"
+   30 │ 
+   31 │ 
+   32 │ def create_app(db_path: Path | None = None) -> FastAPI:
+   33 │     """创建并配置 FastAPI 应用。"""
+   34 │     from lingshu_api.dependencies import set_cloud_store, set_store, set_sync_service
+   35 │     from lingshu_api.routers import admin, admin_auth, auth, bookshelf, bookstore, workspace
+   36 │     from lingshu_api.services.book_sync import BookSyncService
+   37 │     from lingshu_api.services.db_bridge import WorkspaceDBProvider
+   38 │     from novel_app.bookstore import BookstoreStore, CloudBookStore, _admin_usernames_from_env
+   39 │ 
+   40 │     resolved_db_path = db_path or Path(os.environ.get("BOOKSTORE_DB_PATH", "") or DEFAULT_DB_PATH)
+   41 │     store = BookstoreStore(resolved_db_path)
+   42 │     store.sync_admin_users(_admin_usernames_from_env())
+   43 │ 
+   44 │     cloud_store = CloudBookStore(resolved_db_path)
+   45 │ 
+   46 │     class _NonClosingWorkspaceDB:
+   47 │         def __init__(self, target):
+   48 │             self._target = target
+   49 │ 
+   50 │         def __getattr__(self, name):
+   51 │             return getattr(self._target, name)
+   52 │ 
+   53 │         def close(self):
+   54 │             return None
+   55 │ 
+   56 │     workspace_provider = WorkspaceDBProvider()
+   57 │ 
+   58 │     sync_service = BookSyncService(
+   59 │         cloud_store=cloud_store,
+   60 │         workspace_db_factory=lambda: _NonClosingWorkspaceDB(workspace_provider.get()),
+   61 │     )
+   62 │ 
+   63 │     # lifespan 替代已废弃的 on_event
+   64 │     @asynccontextmanager
+   65 │     async def lifespan(application: FastAPI):
+   66 │         # startup: 启动 WebSocket 心跳 + 清理过期管理员 Token
+   67 │         from lingshu_api.ws.connection import get_ws_manager
+   68 │         ping_task = asyncio.create_task(get_ws_manager().ping_loop())
+   69 │         try:
+   70 │             from lingshu_api.routers.admin_auth import _get_db_path, cleanup_on_startup
+   71 │             cleanup_on_startup(_get_db_path(store))
+   72 │         except Exception:
+   73 │             pass
+   74 │         yield
+   75 │         # shutdown: 取消心跳任务
+   76 │         ping_task.cancel()
+   77 │         with suppress(asyncio.CancelledError):
+   78 │             await ping_task
+   79 │         workspace_provider.close()
+   80 │ 
+   81 │     _disable_docs = os.environ.get("DISABLE_API_DOCS", "true").lower() in ("true", "1", "yes")
+   82 │     app = FastAPI(
+   83 │         title="灵枢 API",
+   84 │         lifespan=lifespan,
+   85 │         docs_url=None if _disable_docs else "/docs",
+   86 │         redoc_url=None if _disable_docs else "/redoc",
+   87 │         openapi_url=None if _disable_docs else "/openapi.json",
+   88 │     )
+   89 │ 
+   90 │     # 将 store / cloud_store / sync_service 写入 app.state
+   91 │     set_store(app, store)
+   92 │     set_cloud_store(app, cloud_store)
+   93 │     set_sync_service(app, sync_service)
+   94 │     app.state.workspace_db_provider = workspace_provider
+   95 │ 
+   96 │     # 限流
+   97 │     limiter = Limiter(key_func=get_remote_address)
+   98 │     app.state.limiter = limiter
+   99 │ 
+  100 │     @app.exception_handler(RateLimitExceeded)
+  101 │     async def _rate_limit_handler(request, exc):
+  102 │         return JSONResponse(status_code=429, content={"detail": "请求过于频繁，请稍后再试"})
+  103 │ 
+  104 │     from fastapi.exceptions import RequestValidationError
+  105 │     from starlette.exceptions import HTTPException
+  106 │ 
+  107 │     @app.exception_handler(HTTPException)
+  108 │     async def _http_exception_handler(request, exc):
+  109 │         return JSONResponse(
+  110 │             status_code=exc.status_code,
+  111 │             content={"detail": exc.detail},
+  112 │         )
+  113 │ 
+  114 │     @app.exception_handler(RequestValidationError)
+  115 │     async def _validation_exception_handler(request, exc):
+  116 │         errors = [
+  117 │             {
+  118 │                 "field": ".".join(str(loc) for loc in err.get("loc", [])),
+  119 │                 "message": err.get("msg", ""),
+  120 │                 "type": err.get("type", ""),
+  121 │             }
+  122 │             for err in exc.errors()
+  123 │         ]
+  124 │         return JSONResponse(
+  125 │             status_code=422,
+  126 │             content={"detail": "请求参数验证失败", "errors": errors},
+  127 │         )
+  128 │ 
+  129 │     @app.exception_handler(Exception)
+  130 │     async def _generic_exception_handler(request, exc):
+  131 │         logger = logging.getLogger("lingshu.api")
+  132 │         logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+  133 │         return JSONResponse(
+  134 │             status_code=500,
+  135 │             content={"detail": "服务器内部错误，请稍后重试"},
+  136 │         )
+  137 │ 
+  138 │     # CORS — 生产环境必须通过 CORS_ORIGINS 环境变量配置允许的源
+  139 │     _cors_env = os.environ.get("CORS_ORIGINS", "").strip()
+  140 │     if _cors_env:
+  141 │         allow_origins = [origin.strip() for origin in _cors_env.split(",") if origin.strip()]
+  142 │     else:
+  143 │         # 开发环境默认值 — 仅允许已知端口
+  144 │         allow_origins = [
+  145 │             "http://127.0.0.1:5173", "http://localhost:5173",
+  146 │             "http://127.0.0.1:5174", "http://localhost:5174",
+  147 │             "http://127.0.0.1:5175", "http://localhost:5175",
+  148 │             "http://127.0.0.1:5176", "http://localhost:5176",
+  149 │             "https://www.ling-shu.top", "https://ling-shu.top",
+  150 │         ]
+  151 │ 
+  152 │     app.add_middleware(
+  153 │         CORSMiddleware,
+  154 │         allow_origins=allow_origins,
+  155 │         allow_credentials=True,
+  156 │         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  157 │         allow_headers=[
+  158 │             "Authorization",
+  159 │             "Content-Type",
+  160 │             "X-Publish-Token",
+  161 │             "X-Client-KeyId",
+  162 │             "X-Client-Ts",
+  163 │             "X-Client-Sig",
+  164 │         ],
+  165 │     )
+  166 │ 
+  167 │     # 安全响应头中间件
+  168 │     @app.middleware("http")
+  169 │     async def add_security_headers(request, call_next):
+  170 │         response = await call_next(request)
+  171 │         response.headers["X-Content-Type-Options"] = "nosniff"
+  172 │         response.headers["X-Frame-Options"] = "DENY"
+  173 │         response.headers["X-XSS-Protection"] = "1; mode=block"
+  174 │         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+  175 │         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+  176 │         # CSP 仅对页面资源有意义，对 /api/ JSON 响应反而会触发浏览器跨域误判（net::ERR_FAILED）
+  177 │         path = request.scope.get("path", "")
+  178 │         if not (path or "").startswith("/api/"):
+  179 │             response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; i...
+  180 │         return response
+  181 │ 
+  182 │     @app.middleware("http")
+  183 │     async def _admin_hmac_guard(request, call_next):
+  184 │         path = request.url.path
+  185 │         # 同时保护 /api/admin/ 和 /api/v1/admin/ 路径
+  186 │         is_admin_path = (
+  187 │             path.startswith("/api/admin/") or path.startswith("/api/v1/admin/")
+  188 │         )
+  189 │         is_login = path in ("/api/admin/auth/login", "/api/v1/admin/auth/login")
+  190 │         if is_admin_path and not is_login:
+  191 │             from fastapi import HTTPException
+  192 │ 
+  193 │             from lingshu_api.routers.admin_auth import _admin_keys_configured, verify_admin_hmac_headers
+  194 │ 
+  195 │             if not _admin_keys_configured(resolved_db_path):
+  196 │                 return JSONResponse(
+  197 │                     status_code=503,
+  198 │                     content={"detail": "管理后台未配置安全密钥，请联系管理员配置 HMAC 密钥后重试"},
+  199 │                 )
+  200 │ 
+  201 │             try:
+  202 │                 verify_admin_hmac_headers(resolved_db_path, request)
+  203 │             except HTTPException as exc:
+  204 │                 return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+  205 │         return await call_next(request)
+  206 │ 
+  207 │     @app.middleware("http")
+  208 │     async def _api_v1_alias(request, call_next):
+  209 │         path = str(request.scope.get("path") or "")
+  210 │         if path.startswith("/api/v1/"):
+  211 │             request.scope["lingshu.original_path"] = path
+  212 │             aliased = "/api/" + path.removeprefix("/api/v1/")
+  213 │             request.scope["path"] = aliased
+  214 │             request.scope["raw_path"] = aliased.encode("ascii")
+  215 │         return await call_next(request)
+  216 │ 
+  217 │     # API 版本说明:
+  218 │     # 当前所有 /api/ 路由即为 v1 版本
+  219 │     # 未来 v2 路由将挂载在 /api/v2/ 前缀下
+  220 │     # 客户端可通过 /api/v1/ 前缀访问（与 /api/ 等价）
+  221 │     api_version = "v1"
+  222 │ 
+  223 │     # 挂载 REST 路由（/api/ 前缀 — 向后兼容）
+  224 │     app.include_router(auth.router)
+  225 │     app.include_router(bookshelf.router)
+  226 │     app.include_router(bookstore.router)
+  227 │     app.include_router(admin_auth.router)
+  228 │     app.include_router(admin.router)
+  229 │     app.include_router(workspace.router)
+  230 │ 
+  231 │     # 挂载阶段2新增路由
+  232 │     from lingshu_api.routers import (
+  233 │         analysis_v3,
+  234 │         characters,
+  235 │         rag,
+  236 │         references,
+  237 │         settings,
+  238 │         skills,
+  239 │     )
+  240 │     from lingshu_api.routers import (
+  241 │         export as export_router,
+  242 │     )
+  243 │     from lingshu_api.routers import (
+  244 │         world as world_router,
+  245 │     )
+  246 │     app.include_router(analysis_v3.router)
+  247 │     app.include_router(characters.router)
+  248 │     app.include_router(world_router.router)
+  249 │     app.include_router(skills.router)
+  250 │     app.include_router(references.router)
+  251 │     app.include_router(rag.router)
+  252 │     app.include_router(export_router.router)
+  253 │     app.include_router(settings.router)
+  254 │ 
+  255 │     # 挂载云端同步路由
+  256 │     from lingshu_api.routers import cloud_books
+  257 │     app.include_router(cloud_books.router)
+  258 │ 
+  259 │     # 挂载 WebSocket 路由
+  260 │     from lingshu_api.ws import analysis_v3_ws, chat, generation, review_ws
+  261 │     app.include_router(generation.router)
+  262 │     app.include_router(review_ws.router)
+  263 │     app.include_router(analysis_v3_ws.router)
+  264 │     app.include_router(chat.router)
+  265 │ 
+  266 │     @app.get("/api/health")
+  267 │     def health():
+  268 │         return {"ok": True, "version": api_version}
+  269 │ 
+  270 │     @app.get("/api/v1/health")
+  271 │     def health_v1():
+  272 │         return {"ok": True, "version": api_version}
+  273 │ 
+  274 │     return app
+  275 │ 
+  276 │ 
+  277 │ # 模块级 app 实例（兼容 uvicorn 直接导入）
+  278 │ app = create_app()
+
+────────────────────────────────────────────────────────────────────────
+  📄 lingshu_api/dependencies.py
+  📝 共享依赖注入（认证+store+同步）
+
+────────────────────────────────────────────────────────────────────────
+    1 │ """
+    2 │ 共享依赖注入 — 提供 BookstoreStore 实例和认证辅助函数。
+    3 │ 
+    4 │ 状态存储在 FastAPI app.state 上，通过 Depends 提供依赖注入，
+    5 │ 避免模块级全局变量，利于测试和多实例场景。
+    6 │ """
+    7 │ from __future__ import annotations
+    8 │ 
+    9 │ import logging
+   10 │ import secrets
+   11 │ from typing import Any
+   12 │ 
+   13 │ from fastapi import Header, HTTPException, Request
+   14 │ 
+   15 │ from lingshu_api.services.book_sync import BookSyncService
+   16 │ from lingshu_api.services.db_bridge import WorkspaceDB
+   17 │ from novel_app.bookstore import BookstoreStore, CloudBookStore, _bearer_token, _public_user
+   18 │ 
+   19 │ # ── setter：由 main.py 在 create_app 时调用，写入 app.state ──────────
+   20 │ 
+   21 │ def set_store(app, store: BookstoreStore) -> None:
+   22 │     """设置 store 实例到 app.state（在 create_app 时调用）。"""
+   23 │     app.state.store = store
+   24 │ 
+   25 │ 
+   26 │ def set_cloud_store(app, cloud_store: CloudBookStore) -> None:
+   27 │     """设置 CloudBookStore 实例到 app.state（在 create_app 时调用）。"""
+   28 │     app.state.cloud_store = cloud_store
+   29 │ 
+   30 │ 
+   31 │ def set_sync_service(app, service: BookSyncService) -> None:
+   32 │     """设置 BookSyncService 实例到 app.state（在 create_app 时调用）。"""
+   33 │     app.state.sync_service = service
+   34 │ 
+   35 │ 
+   36 │ # ── FastAPI 依赖：通过 Request.app.state 读取 ──────────────────────
+   37 │ 
+   38 │ def get_store(request: Request) -> BookstoreStore:
+   39 │     """FastAPI 依赖：获取 BookstoreStore 实例。"""
+   40 │     store = getattr(request.app.state, 'store', None)
+   41 │     if store is None:
+   42 │         raise HTTPException(status_code=500, detail="Store 未初始化")
+   43 │     return store
+   44 │ 
+   45 │ 
+   46 │ def get_cloud_store(request: Request) -> CloudBookStore:
+   47 │     """FastAPI 依赖：获取 CloudBookStore 实例。"""
+   48 │     cloud_store = getattr(request.app.state, 'cloud_store', None)
+   49 │     if cloud_store is None:
+   50 │         raise HTTPException(status_code=500, detail="CloudStore 未初始化")
+   51 │     return cloud_store
+   52 │ 
+   53 │ 
+   54 │ def get_sync_service(request: Request) -> BookSyncService:
+   55 │     """FastAPI 依赖：获取 BookSyncService 实例。"""
+   56 │     sync_service = getattr(request.app.state, 'sync_service', None)
+   57 │     if sync_service is None:
+   58 │         raise HTTPException(status_code=500, detail="SyncService 未初始化")
+   59 │     return sync_service
+   60 │ 
+   61 │ 
+   62 │ def get_optional_user(request: Request, authorization: str = Header(default="")) -> dict[str, Any] | None:
+   63 │     """解析 Authorization 头，返回用户信息或 None。"""
+   64 │     token = _bearer_token(authorization)
+   65 │     if not token:
+   66 │         return None
+   67 │     return _public_user(get_store(request).get_user_by_token(token))
+   68 │ 
+   69 │ 
+   70 │ def require_login(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+   71 │     """要求已登录，返回用户信息。"""
+   72 │     token = _bearer_token(authorization)
+   73 │     if not token:
+   74 │         raise HTTPException(status_code=401, detail="未登录")
+   75 │     user = get_store(request).get_user_by_token(token)
+   76 │     if not user:
+   77 │         raise HTTPException(status_code=401, detail="登录已过期")
+   78 │     return user
+   79 │ 
+   80 │ 
+   81 │ def require_ai_access(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+   82 │     """AI 功能统一门禁：所有会调用模型或配置模型的入口必须先登录。"""
+   83 │     token = _bearer_token(authorization)
+   84 │     if not token:
+   85 │         raise HTTPException(status_code=401, detail="请先登录后使用 AI 功能")
+   86 │     user = get_store(request).get_user_by_token(token)
+   87 │     if not user:
+   88 │         raise HTTPException(status_code=401, detail="登录已过期，请重新登录后使用 AI 功能")
+   89 │     return user
+   90 │ 
+   91 │ 
+   92 │ def require_author(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+   93 │     """要求已登录且为作者身份。"""
+   94 │     user = require_login(request, authorization)
+   95 │     if not int(user.get("is_author") or 0):
+   96 │         raise HTTPException(status_code=403, detail="当前账号不是作者账号")
+   97 │     return user
+   98 │ 
+   99 │ 
+  100 │ def require_admin(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+  101 │     """要求已登录且为管理员身份。"""
+  102 │     user = require_login(request, authorization)
+  103 │     if not int(user.get("is_admin") or 0):
+  104 │         raise HTTPException(status_code=403, detail="管理员权限不足")
+  105 │     return user
+  106 │ 
+  107 │ 
+  108 │ def verify_publish_token(
+  109 │     x_publish_token: str = Header(default=""),
+  110 │     resolved_token: str | None = None,
+  111 │ ) -> bool:
+  112 │     """验证桌面端发布令牌。"""
+  113 │     if not resolved_token:
+  114 │         raise HTTPException(status_code=503, detail="发布令牌未配置，已拒绝写入")
+  115 │     if not secrets.compare_digest(x_publish_token, resolved_token):
+  116 │         raise HTTPException(status_code=401, detail="发布令牌无效")
+  117 │     return True
+  118 │ 
+  119 │ 
+  120 │ _logger = logging.getLogger(__name__)
+  121 │ 
+  122 │ 
+  123 │ def try_cloud_sync(request: Request, book_id: int, user: dict | None) -> None:
+  124 │     """已登录时执行云端同步：静默收集 + 已上传书籍编辑同步。"""
+  125 │     if not user:
+  126 │         return
+  127 │     try:
+  128 │         sync_service = get_sync_service(request)
+  129 │         user_id = int(user["id"])
+  130 │         sync_service.silent_collect(book_id, user_id)
+  131 │         sync_service.sync_book_edit(book_id, user_id)
+  132 │     except Exception as e:
+  133 │         _logger.warning("云端同步失败: book_id=%s, user_id=%s, error=%s", book_id, user.get("id"), e)
+  134 │ 
+  135 │ 
+  136 │ def check_book_owner(db: WorkspaceDB, book_id: int, user: dict) -> None:
+  137 │     """校验书籍归属，不属于当前用户则抛 403。"""
+  138 │     if not db.check_book_ownership(book_id, int(user["id"])):
+  139 │         raise HTTPException(status_code=403, detail="无权操作该书籍")
+
+────────────────────────────────────────────────────────────────────────
+  📄 lingshu_api/routers/auth.py
+  📝 用户认证路由（登录/注册/设备信任）
+
+────────────────────────────────────────────────────────────────────────
+    1 │ """
+    2 │ 认证相关路由 — 登录、注册、设备管理。
+    3 │ """
+    4 │ import asyncio
+    5 │ from typing import Any
+    6 │ 
+    7 │ from fastapi import APIRouter, Depends, Header, HTTPException, Request
+    8 │ from slowapi import Limiter
+    9 │ from slowapi.util import get_remote_address
+   10 │ 
+   11 │ from lingshu_api.dependencies import get_store
+   12 │ from lingshu_api.schemas.auth import LoginResponse, OkResponse, UserInfoResponse
+   13 │ from novel_app.bookstore import (
+   14 │     BookstoreStore,
+   15 │     LoginPayload,
+   16 │     RegisterPayload,
+   17 │     TrustDevicePayload,
+   18 │     _bearer_token,
+   19 │     _looks_like_client_hash,
+   20 │ )
+   21 │ 
+   22 │ router = APIRouter(prefix="/api/auth", tags=["auth"])
+   23 │ limiter = Limiter(key_func=get_remote_address)
+   24 │ 
+   25 │ 
+   26 │ def _validate_password_strength(password: str) -> str | None:
+   27 │     """校验密码强度，返回错误信息或 None。"""
+   28 │     if len(password) < 8:
+   29 │         return "密码长度不能少于 8 位"
+   30 │     if not any(c.isalpha() for c in password):
+   31 │         return "密码必须包含字母"
+   32 │     if not any(c.isdigit() for c in password):
+   33 │         return "密码必须包含数字"
+   34 │     return None
+   35 │ 
+   36 │ 
+   37 │ @router.post("/login", response_model=LoginResponse)
+   38 │ @limiter.limit("5/minute")
+   39 │ async def login(request: Request, payload: LoginPayload, store: BookstoreStore = Depends(get_store)):
+   40 │     def _sync():
+   41 │         token = store.login_user(payload.username, payload.password)
+   42 │         if not token:
+   43 │             raise HTTPException(status_code=401, detail="用户名或密码错误")
+   44 │         user = store.get_user_by_token(token)
+   45 │         return {"access_token": token, "token_type": "bearer", "user": user}
+   46 │     return await asyncio.to_thread(_sync)
+   47 │ 
+   48 │ 
+   49 │ @router.post("/register", response_model=LoginResponse)
+   50 │ @limiter.limit("5/minute")
+   51 │ async def register(request: Request, payload: RegisterPayload, store: BookstoreStore = Depends(get_store)):
+   52 │     # 客户端哈希后的密码（64位hex）无法校验原始强度，仅对明文密码校验
+   53 │     if not _looks_like_client_hash(payload.password):
+   54 │         pw_error = _validate_password_strength(payload.password)
+   55 │         if pw_error:
+   56 │             raise HTTPException(status_code=400, detail=pw_error)
+   57 │ 
+   58 │     def _sync():
+   59 │         user = store.create_user(payload.username, payload.password, payload.is_author)
+   60 │         token = store.login_user(payload.username, payload.password)
+   61 │         return {"access_token": token, "token_type": "bearer", "user": user}
+   62 │     return await asyncio.to_thread(_sync)
+   63 │ 
+   64 │ 
+   65 │ @router.post("/logout", response_model=OkResponse)
+   66 │ async def logout(authorization: str = Header(default=""), store: BookstoreStore = Depends(get_store)):
+   67 │     token = _bearer_token(authorization)
+   68 │     if token:
+   69 │         await asyncio.to_thread(store.logout_token, token)
+   70 │     return {"ok": True}
+   71 │ 
+   72 │ 
+   73 │ @router.get("/me", response_model=UserInfoResponse)
+   74 │ async def me(authorization: str = Header(default=""), store: BookstoreStore = Depends(get_store)):
+   75 │     token = _bearer_token(authorization)
+   76 │     if not token:
+   77 │         raise HTTPException(status_code=401, detail="未登录")
+   78 │ 
+   79 │     def _sync():
+   80 │         user = store.get_user_by_token(token)
+   81 │         if not user:
+   82 │             raise HTTPException(status_code=401, detail="登录已过期")
+   83 │         return user
+   84 │     return await asyncio.to_thread(_sync)
+   85 │ 
+   86 │ 
+   87 │ @router.post("/check-device", response_model=dict[str, Any])  # TODO: 细化 response_model
+   88 │ async def check_device(
+   89 │     request: Request,
+   90 │     payload: TrustDevicePayload,
+   91 │     authorization: str = Header(default=""),
+   92 │     store: BookstoreStore = Depends(get_store),
+   93 │ ):
+   94 │     token = _bearer_token(authorization)
+   95 │     if not token:
+   96 │         raise HTTPException(status_code=401, detail="未登录")
+   97 │     client_ip = request.client.host if request.client else "127.0.0.1"
+   98 │ 
+   99 │     def _sync():
+  100 │         user = store.get_user_by_token(token)
+  101 │         if not user:
+  102 │             raise HTTPException(status_code=401, detail="登录已过期")
+  103 │         return store.check_device_trusted(user["id"], payload.fingerprint, client_ip)
+  104 │     return await asyncio.to_thread(_sync)
+  105 │ 
+  106 │ 
+  107 │ @router.post("/trust-device", response_model=OkResponse)
+  108 │ async def trust_device(
+  109 │     request: Request,
+  110 │     payload: TrustDevicePayload,
+  111 │     authorization: str = Header(default=""),
+  112 │     store: BookstoreStore = Depends(get_store),
+  113 │ ):
+  114 │     token = _bearer_token(authorization)
+  115 │     if not token:
+  116 │         raise HTTPException(status_code=401, detail="未登录")
+  117 │     client_ip = request.client.host if request.client else "127.0.0.1"
+  118 │ 
+  119 │     def _sync():
+  120 │         user = store.get_user_by_token(token)
+  121 │         if not user:
+  122 │             raise HTTPException(status_code=401, detail="登录已过期")
+  123 │         store.trust_device(user["id"], payload.fingerprint, payload.device_info, client_ip)
+  124 │         return {"ok": True}
+  125 │     return await asyncio.to_thread(_sync)
+  126 │ 
+  127 │ 
+  128 │ @router.get("/devices", response_model=dict[str, Any])  # TODO: 细化 response_model
+  129 │ async def list_devices(
+  130 │     authorization: str = Header(default=""),
+  131 │     store: BookstoreStore = Depends(get_store),
+  132 │ ):
+  133 │     token = _bearer_token(authorization)
+  134 │     if not token:
+  135 │         raise HTTPException(status_code=401, detail="未登录")
+  136 │ 
+  137 │     def _sync():
+  138 │         user = store.get_user_by_token(token)
+  139 │         if not user:
+  140 │             raise HTTPException(status_code=401, detail="登录已过期")
+  141 │         return {"items": store.get_trusted_devices(user["id"])}
+  142 │     return await asyncio.to_thread(_sync)
+
+────────────────────────────────────────────────────────────────────────
+  📄 lingshu_api/routers/admin_auth.py
+  📝 管理员独立认证路由
+
+────────────────────────────────────────────────────────────────────────
+    1 │ """
+    2 │ 管理员独立认证路由。
+    3 │ 
+    4 │ 云端管理后台使用 admin_users / admin_auth_tokens，与普通用户登录完全分离。
+    5 │ """
+    6 │ from __future__ import annotations
+    7 │ 
+    8 │ import base64
+    9 │ import contextlib
+   10 │ import hashlib
+   11 │ import hmac
+   12 │ import logging
+   13 │ import os
+   14 │ import secrets
+   15 │ import sqlite3
+   16 │ import time
+   17 │ from datetime import UTC, datetime, timedelta
+   18 │ from pathlib import Path
+   19 │ from typing import Any
+   20 │ 
+   21 │ import bcrypt
+   22 │ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+   23 │ from fastapi import APIRouter, Depends, Header, HTTPException, Request
+   24 │ from slowapi import Limiter
+   25 │ from slowapi.util import get_remote_address
+   26 │ 
+   27 │ from lingshu_api.dependencies import get_store
+   28 │ from lingshu_api.schemas.admin_auth import AdminLoginPayload
+   29 │ from novel_app.bookstore import BookstoreStore, _bearer_token
+   30 │ from novel_app.bookstore.models import _sql_identifier
+   31 │ 
+   32 │ router = APIRouter(prefix="/api/admin/auth", tags=["admin-auth"])
+   33 │ 
+   34 │ 
+   35 │ def _admin_rate_limit_key(request: Request) -> str:
+   36 │     return f"{get_remote_address(request)}:{id(request.app)}"
+   37 │ 
+   38 │ 
+   39 │ limiter = Limiter(key_func=_admin_rate_limit_key)
+   40 │ 
+   41 │ _ADMIN_TOKENS_TABLE = "admin_auth_tokens"
+   42 │ _ADMIN_KEYS_TABLE = "admin_keys"
+   43 │ _ADMIN_HMAC_WINDOW_MS = 5 * 60 * 1000
+   44 │ 
+   45 │ # Token 有效期（小时），可通过环境变量覆盖
+   46 │ _ADMIN_TOKEN_TTL_HOURS = int(os.environ.get("ADMIN_TOKEN_TTL_HOURS", "24"))
+   47 │ 
+   48 │ 
+   49 │ def _cleanup_expired_tokens(db_path: Path) -> int:
+   50 │     """清理过期的管理员 Token，返回删除数量。"""
+   51 │     with sqlite3.connect(db_path) as conn:
+   52 │         cursor = conn.execute(
+   53 │             f"DELETE FROM {_ADMIN_TOKENS_TABLE} WHERE expires_at <= datetime('now')"
+   54 │         )
+   55 │         conn.commit()
+   56 │         return cursor.rowcount
+   57 │ 
+   58 │ 
+   59 │ def cleanup_on_startup(db_path: Path) -> None:
+   60 │     """应用启动时清理过期 Token。"""
+   61 │     try:
+   62 │         count = _cleanup_expired_tokens(db_path)
+   63 │         if count > 0:
+   64 │             logging.getLogger("lingshu.admin_auth").info("清理了 %d 个过期管理员 Token", count)
+   65 │     except Exception:
+   66 │         pass  # 启动时不应因清理失败而中断
+   67 │ 
+   68 │ 
+   69 │ def _admin_token_hash(token: str) -> str:
+   70 │     """Hash an admin token for secure storage."""
+   71 │     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+   72 │ 
+   73 │ 
+   74 │ def _get_db_path(store: BookstoreStore) -> Path:
+   75 │     return store.db_path
+   76 │ 
+   77 │ 
+   78 │ def _get_encryption_key(db_path: Path) -> bytes:
+   79 │     """获取或生成 HMAC 密钥的 AES-256 加密密钥。
+   80 │     优先从环境变量 ADMIN_HMAC_ENCRYPTION_KEY 读取（base64 编码的 32 字节密钥），
+   81 │     否则从数据库同目录的 .admin_encryption_key 文件读取，若不存在则自动生成。"""
+   82 │     env_key = os.environ.get("ADMIN_HMAC_ENCRYPTION_KEY")
+   83 │     if env_key:
+   84 │         return base64.b64decode(env_key)
+   85 │     p = Path(db_path) if not isinstance(db_path, Path) else db_path
+   86 │     key_file = p.parent / ".admin_encryption_key"
+   87 │     if key_file.exists():
+   88 │         return base64.b64decode(key_file.read_text().strip())
+   89 │     key = AESGCM.generate_key(bit_length=256)
+   90 │     key_file.write_text(base64.b64encode(key).decode())
+   91 │     with contextlib.suppress(OSError):
+   92 │         os.chmod(str(key_file), 0o600)
+   93 │     return key
+   94 │ 
+   95 │ 
+   96 │ def _encrypt_secret(plaintext: str, db_path: Path) -> str:
+   97 │     """使用 AES-256-GCM 加密密钥。返回 aes256gcm:<iv>:<ciphertext>:<tag> 格式。"""
+   98 │     key = _get_encryption_key(db_path)
+   99 │     aesgcm = AESGCM(key)
+  100 │     iv = os.urandom(12)
+  101 │     ciphertext_with_tag = aesgcm.encrypt(iv, plaintext.encode(), None)
+  102 │     ciphertext = ciphertext_with_tag[:-16]
+  103 │     tag = ciphertext_with_tag[-16:]
+  104 │     return f"aes256gcm:{base64.b64encode(iv).decode()}:{base64.b64encode(ciphertext).decode()}:{base64.b64encode(tag)...
+  105 │ 
+  106 │ 
+  107 │ def _decrypt_secret(encrypted: str, db_path: Path) -> str:
+  108 │     """解密密钥。如果值不以 aes256gcm: 开头，则视为明文（向后兼容）。"""
+  109 │     if not encrypted.startswith("aes256gcm:"):
+  110 │         return encrypted
+  111 │     parts = encrypted.split(":")
+  112 │     if len(parts) != 4:
+  113 │         raise ValueError("Invalid encrypted secret format")
+  114 │     _, iv_b64, ct_b64, tag_b64 = parts
+  115 │     key = _get_encryption_key(db_path)
+  116 │     aesgcm = AESGCM(key)
+  117 │     iv = base64.b64decode(iv_b64)
+  118 │     ciphertext = base64.b64decode(ct_b64)
+  119 │     tag = base64.b64decode(tag_b64)
+  120 │     plaintext = aesgcm.decrypt(iv, ciphertext + tag, None)
+  121 │     return plaintext.decode()
+  122 │ 
+  123 │ 
+  124 │ _ALLOWED_ADMIN_TABLES = frozenset({"admin_users", "admin_auth_tokens", "admin_keys", "admin_audit_logs"})
+  125 │ 
+  126 │ 
+  127 │ def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
+  128 │     """Get column names for a whitelisted admin table."""
+  129 │     if table_name not in _ALLOWED_ADMIN_TABLES:
+  130 │         raise ValueError(f"Table '{table_name}' is not allowed for PRAGMA inspection")
+  131 │     return {str(row[1]) for row in connection.execute(f"PRAGMA table_info({_sql_identifier(table_name)})").fetchall()}
+  132 │ 
+  133 │ 
+  134 │ def _admin_audit_needs_rebuild(connection: sqlite3.Connection) -> bool:
+  135 │     columns = _table_columns(connection, "admin_audit_logs")
+  136 │     if not columns:
+  137 │         return False
+  138 │     expected = {"id", "admin_user_id", "action", "object_type", "object_id", "detail", "created_at"}
+  139 │     if not expected.issubset(columns):
+  140 │         return True
+  141 │     foreign_keys = connection.execute(f"PRAGMA foreign_key_list({_sql_identifier('admin_audit_logs')})").fetchall()
+  142 │     return any(str(row[2]) == "users" for row in foreign_keys)
+  143 │ 
+  144 │ 
+  145 │ def _column_expr(columns: set[str], *names: str, default: str = "''") -> str:
+  146 │     for name in names:
+  147 │         if name in columns:
+  148 │             return name
+  149 │     return default
+  150 │ 
+  151 │ 
+  152 │ def _ensure_admin_audit_table(connection: sqlite3.Connection) -> None:
+  153 │     """Normalize admin audit storage so independent admins can write audit rows."""
+  154 │     connection.execute(
+  155 │         """
+  156 │         CREATE TABLE IF NOT EXISTS admin_audit_logs (
+  157 │             id INTEGER PRIMARY KEY AUTOINCREMENT,
+  158 │             admin_user_id INTEGER NOT NULL,
+  159 │             action TEXT NOT NULL,
+  160 │             object_type TEXT NOT NULL,
+  161 │             object_id TEXT NOT NULL DEFAULT '',
+  162 │             detail TEXT NOT NULL DEFAULT '',
+  163 │             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  164 │         )
+  165 │         """
+  166 │     )
+  167 │     if _admin_audit_needs_rebuild(connection):
+  168 │         columns = _table_columns(connection, "admin_audit_logs")
+  169 │         id_expr = _column_expr(columns, "id", default="NULL")
+  170 │         admin_expr = _column_expr(columns, "admin_user_id", default="0")
+  171 │         action_expr = _column_expr(columns, "action")
+  172 │         object_type_expr = _column_expr(columns, "object_type", "target_type")
+  173 │         object_id_expr = _column_expr(columns, "object_id", "target_id")
+  174 │         detail_expr = _column_expr(columns, "detail", "detail_json", default="'{}'")
+  175 │         created_expr = _column_expr(columns, "created_at", default="CURRENT_TIMESTAMP")
+  176 │         connection.execute("PRAGMA foreign_keys = OFF")
+  177 │         connection.execute("ALTER TABLE admin_audit_logs RENAME TO admin_audit_logs_old")
+  178 │         connection.execute(
+  179 │             """
+  180 │             CREATE TABLE admin_audit_logs (
+  181 │                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+  182 │                 admin_user_id INTEGER NOT NULL,
+  183 │                 action TEXT NOT NULL,
+  184 │                 object_type TEXT NOT NULL,
+  185 │                 object_id TEXT NOT NULL DEFAULT '',
+  186 │                 detail TEXT NOT NULL DEFAULT '',
+  187 │                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  188 │             )
+  189 │             """
+  190 │         )
+  191 │         connection.execute(
+  192 │             f"""
+  193 │             INSERT INTO admin_audit_logs (id, admin_user_id, action, object_type, object_id, detail, created_at)
+  194 │             SELECT {id_expr}, {admin_expr}, {action_expr}, {object_type_expr}, {object_id_expr}, {detail_expr}, {crea...
+  195 │             FROM admin_audit_logs_old
+  196 │             """
+  197 │         )
+  198 │         connection.execute("DROP TABLE admin_audit_logs_old")
+  199 │         connection.execute("PRAGMA foreign_keys = ON")
+  200 │     connection.execute(
+  201 │         """
+  202 │         CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created
+  203 │         ON admin_audit_logs(created_at DESC, id DESC)
+  204 │         """
+  205 │     )
+  206 │ 
+  207 │ 
+  208 │ def _ensure_admin_tables(db_path: Path) -> None:
+  209 │     with sqlite3.connect(db_path) as connection:
+  210 │         connection.execute("PRAGMA foreign_keys = ON")
+  211 │         connection.execute(
+  212 │             """
+  213 │             CREATE TABLE IF NOT EXISTS admin_users (
+  214 │                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+  215 │                 username TEXT NOT NULL UNIQUE,
+  216 │                 password_hash TEXT NOT NULL,
+  217 │                 display_name TEXT NOT NULL DEFAULT '',
+  218 │                 role TEXT NOT NULL DEFAULT 'operator',
+  219 │                 status TEXT NOT NULL DEFAULT 'active',
+  220 │                 last_login_at TEXT,
+  221 │                 created_at TEXT NOT NULL DEFAULT '',
+  222 │                 updated_at TEXT NOT NULL DEFAULT ''
+  223 │             )
+  224 │             """
+  225 │         )
+  226 │         connection.execute(
+  227 │             f"""
+  228 │             CREATE TABLE IF NOT EXISTS {_ADMIN_TOKENS_TABLE} (
+  229 │                 token TEXT PRIMARY KEY,
+  230 │                 admin_user_id INTEGER NOT NULL,
+  231 │                 expires_at TEXT NOT NULL,
+  232 │                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  233 │                 FOREIGN KEY (admin_user_id) REFERENCES admin_users(id) ON DELETE CASCADE
+  234 │             )
+  235 │             """
+  236 │         )
+  237 │         connection.execute(
+  238 │             f"""
+  239 │             CREATE TABLE IF NOT EXISTS {_ADMIN_KEYS_TABLE} (
+  240 │                 key_id TEXT PRIMARY KEY,
+  241 │                 admin_user_id INTEGER NOT NULL,
+  242 │                 secret_encrypted TEXT NOT NULL,
+  243 │                 key_fingerprint TEXT NOT NULL DEFAULT '',
+  244 │                 status TEXT NOT NULL DEFAULT 'active',
+  245 │                 issued_at TEXT NOT NULL DEFAULT '',
+  246 │                 last_used_at TEXT,
+  247 │                 expires_at TEXT,
+  248 │                 FOREIGN KEY (admin_user_id) REFERENCES admin_users(id) ON DELETE CASCADE
+  249 │             )
+  250 │             """
+  251 │         )
+  252 │         _ensure_admin_audit_table(connection)
+  253 │         connection.commit()
+  254 │     # 惰性清理过期 Token
+  255 │     with contextlib.suppress(Exception):
+  256 │         _cleanup_expired_tokens(db_path)
+  257 │ 
+  258 │ 
+  259 │ def _admin_keys_configured(db_path: Path) -> bool:
+  260 │     _ensure_admin_tables(db_path)
+  261 │     with sqlite3.connect(db_path) as connection:
+  262 │         count = connection.execute(
+  263 │             f"""
+  264 │             SELECT COUNT(*)
+  265 │             FROM {_ADMIN_KEYS_TABLE}
+  266 │             WHERE status = 'active'
+  267 │               AND (expires_at IS NULL OR expires_at = '' OR expires_at > datetime('now'))
+  268 │             """
+  269 │         ).fetchone()[0]
+  270 │     return int(count or 0) > 0
+  271 │ 
+  272 │ 
+  273 │ def _admin_hmac_message(timestamp: str, method: str, path: str) -> str:
+  274 │     return f"{timestamp}\n{method.upper()}\n{path}"
+  275 │ 
+  276 │ 
+  277 │ def _verify_admin_hmac_signature(
+  278 │     db_path: Path,
+  279 │     *,
+  280 │     key_id: str,
+  281 │     timestamp: str,
+  282 │     signature: str,
+  283 │     method: str,
+  284 │     path: str,
+  285 │ ) -> dict[str, Any] | None:
+  286 │     _ensure_admin_tables(db_path)
+  287 │     if not key_id or not timestamp or not signature:
+  288 │         return None
+  289 │     try:
+  290 │         ts = int(timestamp)
+  291 │     except (TypeError, ValueError):
+  292 │         return None
+  293 │     if abs(time.time() * 1000 - ts) > _ADMIN_HMAC_WINDOW_MS:
+  294 │         return None
+  295 │ 
+  296 │     with sqlite3.connect(db_path) as connection:
+  297 │         connection.row_factory = sqlite3.Row
+  298 │         row = connection.execute(
+  299 │             f"""
+  300 │             SELECT
+  301 │                 k.key_id,
+  302 │                 k.secret_encrypted,
+  303 │                 k.status AS key_status,
+  304 │                 k.expires_at,
+  305 │                 a.id,
+  306 │                 a.username,
+  307 │                 a.display_name,
+  308 │                 a.role,
+  309 │                 a.status AS admin_status,
+  310 │                 a.last_login_at
+  311 │             FROM {_ADMIN_KEYS_TABLE} AS k
+  312 │             JOIN admin_users AS a ON a.id = k.admin_user_id
+  313 │             WHERE k.key_id = ?
+  314 │             """,
+  315 │             (key_id,),
+  316 │         ).fetchone()
+  317 │         if not row:
+  318 │             return None
+  319 │         if str(row["key_status"]) != "active" or str(row["admin_status"]) != "active":
+  320 │             return None
+  321 │         expires_at = str(row["expires_at"] or "")
+  322 │         if expires_at:
+  323 │             expires = connection.execute("SELECT ? > datetime('now')", (expires_at,)).fetchone()[0]
+  324 │             if not int(expires or 0):
+  325 │                 return None
+  326 │         message = _admin_hmac_message(timestamp, method, path)
+  327 │         secret = _decrypt_secret(str(row["secret_encrypted"]), db_path)
+  328 │         expected = hmac.new(
+  329 │             secret.encode("utf-8"),
+  330 │             message.encode("utf-8"),
+  331 │             hashlib.sha256,
+  332 │         ).hexdigest()
+  333 │         if not hmac.compare_digest(expected, signature):
+  334 │             return None
+  335 │         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+  336 │         connection.execute(
+  337 │             f"UPDATE {_ADMIN_KEYS_TABLE} SET last_used_at = ? WHERE key_id = ?",
+  338 │             (now, key_id),
+  339 │         )
+  340 │         connection.commit()
+  341 │         return {
+  342 │             "id": row["id"],
+  343 │             "username": row["username"],
+  344 │             "display_name": row["display_name"],
+  345 │             "role": row["role"],
+  346 │             "status": row["admin_status"],
+  347 │             "last_login_at": row["last_login_at"],
+  348 │             "key_id": row["key_id"],
+  349 │         }
+  350 │ 
+  351 │ 
+  352 │ def verify_admin_hmac_headers(db_path: Path, request: Request) -> None:
+  353 │     if not _admin_keys_configured(db_path):
+  354 │         raise HTTPException(status_code=503, detail="管理员密钥未配置，请先配置 HMAC 密钥")
+  355 │     signed_path = str(request.scope.get("lingshu.original_path") or request.url.path)
+  356 │     verified = _verify_admin_hmac_signature(
+  357 │         db_path,
+  358 │         key_id=request.headers.get("X-Client-KeyId", ""),
+  359 │         timestamp=request.headers.get("X-Client-Ts", ""),
+  360 │         signature=request.headers.get("X-Client-Sig", ""),
+  361 │         method=request.method,
+  362 │         path=signed_path,
+  363 │     )
+  364 │     if not verified:
+  365 │         raise HTTPException(status_code=403, detail="管理密钥签名无效或已过期")
+  366 │ 
+  367 │ 
+  368 │ def _get_admin_by_token(db_path: Path, token: str) -> dict[str, Any] | None:
+  369 │     _ensure_admin_tables(db_path)
+  370 │     token_hash = _admin_token_hash(token)
+  371 │     with sqlite3.connect(db_path) as connection:
+  372 │         connection.row_factory = sqlite3.Row
+  373 │         row = connection.execute(
+  374 │             f"""
+  375 │             SELECT a.id, a.username, a.display_name, a.role, a.status, a.last_login_at
+  376 │             FROM {_ADMIN_TOKENS_TABLE} AS t
+  377 │             JOIN admin_users AS a ON a.id = t.admin_user_id
+  378 │             WHERE t.token = ?
+  379 │               AND t.expires_at > datetime('now')
+  380 │               AND a.status = 'active'
+  381 │             """,
+  382 │             (token_hash,),
+  383 │         ).fetchone()
+  384 │     return dict(row) if row else None
+  385 │ 
+  386 │ 
+  387 │ def require_admin_user(
+  388 │     request: Request,
+  389 │     authorization: str = Header(default=""),
+  390 │     store: BookstoreStore = Depends(get_store),
+  391 │ ) -> dict[str, Any]:
+  392 │     token = _bearer_token(authorization)
+  393 │     if not token:
+  394 │         raise HTTPException(status_code=401, detail="未登录")
+  395 │     db_path = _get_db_path(store)
+  396 │     # 双因子验证：HMAC 签名 + Bearer Token
+  397 │     verify_admin_hmac_headers(db_path, request)
+  398 │     admin = _get_admin_by_token(db_path, token)
+  399 │     if not admin:
+  400 │         raise HTTPException(status_code=401, detail="管理员登录已过期或无效")
+  401 │     return admin
+  402 │ 
+  403 │ 
+  404 │ @router.post("/login")
+  405 │ @limiter.limit("5/minute")
+  406 │ async def admin_login(request: Request, payload: AdminLoginPayload, store: BookstoreStore = Depends(get_store)) -> di...
+  407 │     username = payload.username.strip()
+  408 │     password = payload.password
+  409 │ 
+  410 │     db_path = _get_db_path(store)
+  411 │     _ensure_admin_tables(db_path)
+  412 │     if not _admin_keys_configured(db_path):
+  413 │         raise HTTPException(status_code=503, detail="管理员密钥未配置，请先配置 HMAC 密钥")
+  414 │     key_info = _verify_admin_hmac_signature(
+  415 │         db_path,
+  416 │         key_id=payload.key_id,
+  417 │         timestamp=payload.timestamp,
+  418 │         signature=payload.hmac_signature,
+  419 │         method=request.method,
+  420 │         path=str(request.scope.get("lingshu.original_path") or request.url.path),
+  421 │     )
+  422 │     if not key_info:
+  423 │         raise HTTPException(status_code=403, detail="密钥验证失败，请检查密钥文件是否有效")
+  424 │     if str(key_info.get("username") or "") != username:
+  425 │         raise HTTPException(status_code=403, detail="密钥与管理员账号不匹配")
+  426 │ 
+  427 │     with sqlite3.connect(db_path) as connection:
+  428 │         connection.row_factory = sqlite3.Row
+  429 │         row = connection.execute(
+  430 │             """
+  431 │             SELECT id, username, password_hash, display_name, role, status
+  432 │             FROM admin_users
+  433 │             WHERE username = ?
+  434 │             """,
+  435 │             (username,),
+  436 │         ).fetchone()
+  437 │ 
+  438 │     if not row or not bcrypt.checkpw(password.encode("utf-8"), str(row["password_hash"]).encode("utf-8")):
+  439 │         raise HTTPException(status_code=401, detail="管理员用户名或密码错误")
+  440 │     if str(row["status"]) != "active":
+  441 │         raise HTTPException(status_code=403, detail="管理员账号已停用")
+  442 │ 
+  443 │     token = secrets.token_hex(32)
+  444 │     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+  445 │     expires_at = (datetime.now(UTC) + timedelta(hours=_ADMIN_TOKEN_TTL_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+  446 │     with sqlite3.connect(db_path) as connection:
+  447 │         connection.execute("PRAGMA foreign_keys = ON")
+  448 │         connection.execute(
+  449 │             f"""
+  450 │             INSERT INTO {_ADMIN_TOKENS_TABLE} (token, admin_user_id, expires_at, created_at)
+  451 │             VALUES (?, ?, ?, ?)
+  452 │             """,
+  453 │             (_admin_token_hash(token), int(row["id"]), expires_at, now),
+  454 │         )
+  455 │         connection.execute(
+  456 │             """
+  457 │             UPDATE admin_users
+  458 │             SET last_login_at = ?, updated_at = ?
+  459 │             WHERE id = ?
+  460 │             """,
+  461 │             (now, now, int(row["id"])),
+  462 │         )
+  463 │         connection.commit()
+  464 │ 
+  465 │     return {
+  466 │         "access_token": token,
+  467 │         "token_type": "bearer",
+  468 │         "admin": {
+  469 │             "id": row["id"],
+  470 │             "username": row["username"],
+  471 │             "display_name": row["display_name"],
+  472 │             "role": row["role"],
+  473 │             "status": row["status"],
+  474 │         },
+  475 │     }
+  476 │ 
+  477 │ 
+  478 │ @router.get("/me")
+  479 │ async def admin_me(admin: dict[str, Any] = Depends(require_admin_user)) -> dict[str, Any]:
+  480 │     return admin
+  481 │ 
+  482 │ 
+  483 │ @router.post("/logout")
+  484 │ async def admin_logout(
+  485 │     request: Request,
+  486 │     authorization: str = Header(default=""),
+  487 │     store: BookstoreStore = Depends(get_store),
+  488 │ ) -> dict[str, bool]:
+  489 │     db_path = _get_db_path(store)
+  490 │     # 双因子验证：HMAC 签名 + Bearer Token
+  491 │     verify_admin_hmac_headers(db_path, request)
+  492 │     token = _bearer_token(authorization)
+  493 │     if token:
+  494 │         _ensure_admin_tables(db_path)
+  495 │         with sqlite3.connect(db_path) as connection:
+  496 │             connection.execute(f"DELETE FROM {_ADMIN_TOKENS_TABLE} WHERE token = ?", (_admin_token_hash(token),))
+  497 │             connection.commit()
+  498 │     return {"ok": True}
+
+────────────────────────────────────────────────────────────────────────
+  📄 lingshu_api/routers/analysis_v3.py
+  📝 V3 分析 REST API
+
+────────────────────────────────────────────────────────────────────────
+    1 │ """analysis_v3 路由垫片文件 — 重导出拆分后的三个子模块路由。
+    2 │ 
+    3 │ 原 1410 行的单文件已拆分为：
+    4 │   - analysis_v3_runs.py  — 分析运行管理（创建/查询/取消运行）
+    5 │   - analysis_v3_steps.py — 分析步骤执行（实体提及/共指/原子事实等）
+    6 │   - analysis_v3_cards.py — 卡片操作（查询/写回/批量写回）
+    7 │ 
+    8 │ 本文件保留 router 属性以兼容 main.py 中的路由注册。
+    9 │ """
+   10 │ from __future__ import annotations
+   11 │ 
+   12 │ from fastapi import APIRouter
+   13 │ 
+   14 │ from lingshu_api.routers.analysis_v3_cards import router as cards_router
+   15 │ from lingshu_api.routers.analysis_v3_runs import router as runs_router
+   16 │ from lingshu_api.routers.analysis_v3_steps import router as steps_router
+   17 │ 
+   18 │ # 合并三个子路由为统一 router，保持与 main.py 中 analysis_v3.router 的兼容
+   19 │ router = APIRouter(tags=["analysis-v3"])
+   20 │ router.include_router(runs_router)
+   21 │ router.include_router(steps_router)
+   22 │ router.include_router(cards_router)
+   23 │ 
+   24 │ # 重导出子模块的公共函数，供外部引用（如 analysis_v3_ws.py）
+   25 │ from lingshu_api.routers.analysis_v3_runs import (  # noqa: E402, F401
+   26 │     _analysis_v3_run_item,
+   27 │     _check_run_book_owner,
+   28 │     _check_run_book_owner_for_book,
+   29 │     _create_required_analysis_ai_provider,
+   30 │     _get_analysis_v3_run_or_404,
+   31 │     _is_analysis_v3_run,
+   32 │     _load_chapters_for_analysis,
+   33 │     _sanitize_error_text,
+   34 │ )
+   35 │ from lingshu_api.routers.analysis_v3_steps import (  # noqa: E402, F401
+   36 │     _analysis_v3_backtrack_task_item,
+   37 │     _analysis_v3_event_item,
+   38 │     _count_by,
+   39 │     _count_rows_by,
+   40 │     _row_value,
+   41 │     get_analysis_v3_review_summary,
+   42 │ )
+   43 │ from lingshu_api.routers.analysis_v3_cards import (  # noqa: E402, F401
+   44 │     _analysis_v3_card_item,
+   45 │     _analysis_v3_dependency_item,
+   46 │     _create_writeback_card_generator,
+   47 │ )
+
+────────────────────────────────────────────────────────────────────────
+  📄 lingshu_api/routers/workspace.py
+  📝 工作台核心 CRUD API
+
+────────────────────────────────────────────────────────────────────────
+    1 │ """
+    2 │ 工作台核心 API — 书籍/分卷/章节 CRUD + 导入。
+    3 │ 
+    4 │ 对应迁移的 Qt 模块:
+    5 │ - app_tree.py    → 书籍/分卷/章节列表 + 树结构
+    6 │ - app_editor.py  → 章节正文+大纲保存/读取
+    7 │ - app_import.py  → 文件导入 (TXT/DOCX)
+    8 │ - forms.py       → 书籍大纲表单 (已有 structured_templates)
+    9 │ """
+   10 │ from __future__ import annotations
+   11 │ 
+   12 │ import asyncio
+   13 │ import dataclasses
+   14 │ import logging
+   15 │ from pathlib import Path
+   16 │ from typing import Any
+   17 │ 
+   18 │ from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
+   19 │ from pydantic import BaseModel
+   20 │ 
+   21 │ from lingshu_api.dependencies import check_book_owner, get_store, require_ai_access, require_login, try_cloud_sync
+   22 │ from lingshu_api.schemas.analysis_v3 import AnalysisV1OneShotRunCreate
+   23 │ from lingshu_api.schemas.workspace import (
+   24 │     BookCreate,
+   25 │     BookItemResponse,
+   26 │     BookListResponse,
+   27 │     BookOutlineSave,
+   28 │     BookUpdate,
+   29 │     ChapterCreate,
+   30 │     ChapterItemResponse,
+   31 │     ChapterListResponse,
+   32 │     ChapterMove,
+   33 │     ChapterUpdate,
+   34 │     OkResponse,
+   35 │     SnapshotCreate,
+   36 │     SnapshotListResponse,
+   37 │     SnapshotRestore,
+   38 │     VolumeCreate,
+   39 │     VolumeUpdate,
+   40 │ )
+   41 │ from lingshu_api.services.ai_settings import resolve_ai_profile
+   42 │ from lingshu_api.services.db_bridge import WorkspaceDB, get_workspace_db
+   43 │ from lingshu_api.services.usage_recorder import record_ai_usage
+   44 │ from novel_app.ai.service import SimpleAIService
+   45 │ from novel_app.analysis.diff_apply import apply_analysis_cards
+   46 │ from novel_app.analysis.store import AnalysisStore
+   47 │ from novel_app.database import ALL_VOLUMES, UNASSIGNED_VOLUMES
+   48 │ from novel_app.json_utils import extract_json_dict
+   49 │ from novel_app.structured_templates import BOOK_OUTLINE_FORM_SCHEMA
+   50 │ from novel_app.text_importer import ParsedBook, ParsedChapter, parse_long_text
+   51 │ 
+   52 │ router = APIRouter(prefix="/api/workspace", tags=["workspace"])
+   53 │ logger = logging.getLogger(__name__)
+   54 │ 
+   55 │ 
+   56 │ class AiProbabilityPayload(BaseModel):
+   57 │     """AI 率检测请求体。"""
+   58 │     content: str | None = None
+   59 │ 
+   60 │ 
+   61 │ class PolishSelectionPayload(BaseModel):
+   62 │     """润色选区请求体。"""
+   63 │     text: str = ""
+   64 │     instruction: str = ""
+   65 │ 
+   66 │ 
+   67 │ class ApplyAnalysisPayload(BaseModel):
+   68 │     """应用分析结果请求体。"""
+   69 │     user_override: bool = False
+   70 │     allow_weak_evidence: bool | None = None
+   71 │ 
+   72 │     @property
+   73 │     def weak_evidence_allowed(self) -> bool:
+   74 │         return bool(self.user_override or self.allow_weak_evidence)
+   75 │ 
+   76 │ 
+   77 │ def _check_chapter_owner(db: WorkspaceDB, chapter: dict, user: dict) -> int:
+   78 │     book_id = int(chapter.get("book_id") or 0)
+   79 │     if book_id:
+   80 │         check_book_owner(db, book_id, user)
+   81 │     return book_id
+   82 │ 
+   83 │ 
+   84 │ @router.get("/health", response_model=OkResponse)
+   85 │ async def workspace_health():
+   86 │     """工作台 API 健康检查。"""
+   87 │     return {"ok": True}
+   88 │ 
+   89 │ 
+   90 │ # ================================================================
+   91 │ #  书籍 CRUD
+   92 │ # ================================================================
+   93 │ 
+   94 │ @router.get("/books", response_model=BookListResponse)
+   95 │ async def list_books(user: dict = Depends(require_login), db: WorkspaceDB = Depends(get_workspace_db)):
+   96 │     """列出所有作品（含分卷-章节树结构）。"""
+   97 │     def _sync():
+   98 │         user_id = int(user["id"])
+   99 │         books = []
+  100 │         for b in db.list_books(user_id=user_id):
+  101 │             book_data = db.get_book(b["id"])
+  102 │             if book_data:
+  103 │                 books.append(book_data)
+  104 │         return {"items": books}
+  105 │     return await asyncio.to_thread(_sync)
+  106 │ 
+  107 │ 
+  108 │ @router.post("/books", response_model=BookItemResponse)
+  109 │ async def create_book(request: Request, payload: BookCreate, user: dict = Depends(require_login), db: WorkspaceDB = D...
+  110 │     """创建新作品。"""
+  111 │     def _sync():
+  112 │         user_id = int(user["id"])
+  113 │         book = db.create_book(payload.title, user_id=user_id)
+  114 │         book_id = int(book["id"])
+  115 │         book = db.get_book(book_id) or book
+  116 │         try_cloud_sync(request, book_id, user)
+  117 │         return {"ok": True, "item": book}
+  118 │     return await asyncio.to_thread(_sync)
+  119 │ 
+  120 │ 
+  121 │ @router.get("/books/{book_id}", response_model=dict[str, Any])  # TODO: 细化为 BookDetailResponse
+  122 │ async def get_book(book_id: int, user: dict = Depends(require_login), db: WorkspaceDB = Depends(get_workspace_db)):
+  123 │     """获取作品详情（含全部分卷-章节树）。"""
+  124 │     def _sync():
+  125 │         book = db.get_book(book_id)
+  126 │         if not book:
+  127 │             raise HTTPException(status_code=404, detail="作品不存在")
+  128 │         check_book_owner(db, book_id, user)
+  129 │         return book
+  130 │     return await asyncio.to_thread(_sync)
+  131 │ 
+  132 │ 
+  133 │ @router.patch("/books/{book_id}", response_model=BookItemResponse)
+  134 │ async def update_book(request: Request, book_id: int, payload: BookUpdate, user: dict = Depends(require_login), db: W...
+  135 │     """更新作品信息（标题/简介）。"""
+  136 │     def _sync():
+  137 │         check_book_owner(db, book_id, user)
+  138 │         book = db.get_book(book_id)
+  139 │         if not book:
+  140 │             raise HTTPException(status_code=404, detail="作品不存在")
+  141 │         if payload.title:
+  142 │             db.rename_book(book_id, payload.title)
+  143 │         try_cloud_sync(request, book_id, user)
+  144 │         return {"ok": True, "item": db.get_book(book_id)}
+  145 │     return await asyncio.to_thread(_sync)
+  146 │ 
+  147 │ 
+  148 │ @router.delete("/books/{book_id}", response_model=OkResponse)
+  149 │ async def delete_book(book_id: int, user: dict = Depends(require_login), db: WorkspaceDB = Depends(get_workspace_db)):
+  150 │     """删除作品及其全部分卷/章节。"""
+  151 │     def _sync():
+  152 │         check_book_owner(db, book_id, user)
+  153 │         if not db.get_book(book_id):
+  154 │             raise HTTPException(status_code=404, detail="作品不存在")
+  155 │         db.delete_book(book_id)
+  156 │         return {"ok": True}
+  157 │     return await asyncio.to_thread(_sync)
+  158 │ 
+  159 │ 
+  160 │ # ================================================================
+  161 │ #  分卷 CRUD
+  162 │ # ================================================================
+  163 │ 
+  164 │ @router.post("/books/{book_id}/volumes", response_model=BookItemResponse)  # TODO: 细化为 VolumeItemResponse
+  165 │ async def create_volume(request: Request, book_id: int, payload: VolumeCreate, user: dict = Depends(require_login), d...
+  166 │     """创建分卷。"""
+  167 │     def _sync():
+  168 │         check_book_owner(db, book_id, user)
+  169 │         if not db.get_book(book_id):
+  170 │             raise HTTPException(status_code=404, detail="作品不存在")
+  171 │         vol = db.create_volume(book_id, payload.title)
+  172 │         try_cloud_sync(request, book_id, user)
+  173 │         return {"ok": True, "item": vol}
+  174 │     return await asyncio.to_thread(_sync)
+  175 │ 
+  176 │ 
+  177 │ @router.patch("/volumes/{volume_id}", response_model=OkResponse)
+  178 │ async def update_volume(request: Request, volume_id: int, payload: VolumeUpdate, user: dict = Depends(require_login),...
+  179 │     """更新分卷（重命名/排序）。"""
+  180 │     def _sync():
+  181 │         volume = db.get_volume(volume_id)
+  182 │         book_id = int(volume["book_id"]) if volume else None
+  183 │         if book_id:
+  184 │             check_book_owner(db, book_id, user)
+  185 │         if payload.title:
+  186 │             db.rename_volume(volume_id, payload.title)
+  187 │         if book_id:
+  188 │             try_cloud_sync(request, book_id, user)
+  189 │         return {"ok": True}
+  190 │     return await asyncio.to_thread(_sync)
+  191 │ 
+  192 │ 
+  193 │ @router.delete("/volumes/{volume_id}", response_model=OkResponse)
+  194 │ async def delete_volume(request: Request, volume_id: int, user: dict = Depends(require_login), db: WorkspaceDB = Depe...
+  195 │     """删除分卷及其下全部章节。"""
+  196 │     def _sync():
+  197 │         volume = db.get_volume(volume_id)
+  198 │         book_id = int(volume["book_id"]) if volume else None
+  199 │         if book_id:
+  200 │             check_book_owner(db, book_id, user)
+  201 │         db.delete_volume(volume_id)
+  202 │         if book_id:
+  203 │             try_cloud_sync(request, book_id, user)
+  204 │         return {"ok": True}
+  205 │     return await asyncio.to_thread(_sync)
+  206 │ 
+  207 │ 
+  208 │ # ================================================================
+  209 │ #  章节 CRUD
+  210 │ # ================================================================
+  211 │ 
+  212 │ @router.post("/volumes/{volume_id}/chapters", response_model=ChapterItemResponse)
+  213 │ async def create_chapter_in_volume(request: Request, volume_id: int, payload: ChapterCreate, user: dict = Depends(req...
+  214 │     """在某分卷下创建章节。"""
+  215 │     def _sync():
+  216 │         volume = db.get_volume(volume_id)
+  217 │         if not volume:
+  218 │             raise HTTPException(status_code=404, detail="分卷不存在")
+  219 │         book_id = int(volume["book_id"])
+  220 │         check_book_owner(db, book_id, user)
+  221 │         ch = db.create_chapter(book_id, payload.title, volume_id)
+  222 │         try_cloud_sync(request, book_id, user)
+  223 │         return {"ok": True, "item": ch}
+  224 │     return await asyncio.to_thread(_sync)
+  225 │ 
+  226 │ 
+  227 │ @router.post("/books/{book_id}/chapters", response_model=ChapterItemResponse)
+  228 │ async def create_chapter_in_book(request: Request, book_id: int, payload: ChapterCreate, user: dict = Depends(require...
+  229 │     """在作品下创建未分卷章节。"""
+  230 │     def _sync():
+  231 │         check_book_owner(db, book_id, user)
+  232 │         ch = db.create_chapter(book_id, payload.title, None)
+  233 │         try_cloud_sync(request, book_id, user)
+  234 │         return {"ok": True, "item": ch}
+  235 │     return await asyncio.to_thread(_sync)
+  236 │ 
+  237 │ 
+  238 │ @router.get("/books/{book_id}/chapters", response_model=ChapterListResponse)
+  239 │ async def list_chapters(
+  240 │     book_id: int,
+  241 │     volume_filter: int | str = Query(default=ALL_VOLUMES, alias="volume"),
+  242 │     user: dict = Depends(require_login),
+  243 │     db: WorkspaceDB = Depends(get_workspace_db),
+  244 │ ):
+  245 │     """列出作品下的章节（可按分卷筛选）。"""
+  246 │     def _sync():
+  247 │         book = db.get_book(book_id)
+  248 │         if not book:
+  249 │             raise HTTPException(status_code=404, detail="作品不存在")
+  250 │         check_book_owner(db, book_id, user)
+  251 │         try:
+  252 │             vf = int(volume_filter)
+  253 │         except (ValueError, TypeError):
+  254 │             vf = ALL_VOLUMES if volume_filter == "all" else UNASSIGNED_VOLUMES
+  255 │         chapters = db.list_chapters(book_id, vf)
+  256 │         return {"items": chapters}
+  257 │     return await asyncio.to_thread(_sync)
+  258 │ 
+  259 │ 
+  260 │ @router.get("/books/{book_id}/search", response_model=dict[str, Any])  # TODO: 细化为 SearchResponse
+  261 │ async def search_book_text(
+  262 │     book_id: int,
+  263 │     q: str = Query(default="", description="精确查找关键词"),
+  264 │     limit: int = Query(default=100, ge=1, le=200),
+  265 │     case_sensitive: bool = Query(default=False),
+  266 │     user: dict = Depends(require_login),
+  267 │     db: WorkspaceDB = Depends(get_workspace_db),
+  268 │ ):
+  269 │     """在当前作品章节标题和正文中做精确文本查找。"""
+  270 │     def _sync():
+  271 │         book = db.get_book(book_id)
+  272 │         if not book:
+  273 │             raise HTTPException(status_code=404, detail="作品不存在")
+  274 │         check_book_owner(db, book_id, user)
+  275 │         query = q.strip()
+  276 │         if not query:
+  277 │             return {"items": [], "query": query}
+  278 │         return {
+  279 │             "items": db.search_book(book_id, query, limit=limit, case_sensitive=case_sensitive),
+  280 │             "query": query,
+  281 │         }
+  282 │     return await asyncio.to_thread(_sync)
+  283 │ 
+  284 │ 
+  285 │ @router.get("/chapters/{chapter_id}", response_model=dict[str, Any])  # TODO: 细化为 ChapterDetailResponse
+  286 │ async def get_chapter(chapter_id: int, user: dict = Depends(require_login), db: WorkspaceDB = Depends(get_workspace_d...
+  287 │     """获取章节完整内容（正文+大纲）。"""
+  288 │     def _sync():
+  289 │         ch = db.get_chapter(chapter_id)
+  290 │         if not ch:
+  291 │             raise HTTPException(status_code=404, detail="章节不存在")
+  292 │         _check_chapter_owner(db, ch, user)
+  293 │         return ch
+  294 │     return await asyncio.to_thread(_sync)
+  295 │ 
+  296 │ 
+  297 │ @router.patch("/chapters/{chapter_id}", response_model=ChapterItemResponse)
+  298 │ async def update_chapter(request: Request, chapter_id: int, payload: ChapterUpdate, user: dict = Depends(require_logi...
+  299 │     """保存章节（正文/大纲/标题）。"""
+  300 │     def _sync():
+  301 │         ch = db.get_chapter(chapter_id)
+  302 │         if not ch:
+  303 │             raise HTTPException(status_code=404, detail="章节不存在")
+  304 │         book_id = int(ch.get("book_id") or 0)
+  305 │         if book_id:
+  306 │             check_book_owner(db, book_id, user)
+  307 │         kwargs = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+  308 │         if kwargs:
+  309 │             ch = db.update_chapter(chapter_id, **kwargs)
+  310 │             book_id = int(ch.get("book_id") or 0) if ch else None
+  311 │             if book_id:
+  312 │                 try_cloud_sync(request, book_id, user)
+  313 │             return {"ok": True, "item": ch}
+  314 │         if book_id:
+  315 │             try_cloud_sync(request, book_id, user)
+  316 │         return {"ok": True, "item": db.get_chapter(chapter_id)}
+  317 │     return await asyncio.to_thread(_sync)
+  318 │ 
+  319 │ 
+  320 │ @router.post("/chapters/{chapter_id}/ai-probability", response_model=dict[str, Any])  # TODO: 细化 response_model
+  321 │ async def detect_chapter_ai_probability(
+  322 │     request: Request,
+  323 │     chapter_id: int,
+  324 │     body: AiProbabilityPayload,
+  325 │     user: dict = Depends(require_ai_access),
+  326 │     db: WorkspaceDB = Depends(get_workspace_db),
+  327 │ ):
+  328 │     """检测当前章节 AI 生成概率，并写回章节元数据。"""
+  329 │     def _sync():
+  330 │         chapter = db.get_chapter(chapter_id)
+  331 │         if not chapter:
+  332 │             raise HTTPException(status_code=404, detail="章节不存在")
+  333 │         _check_chapter_owner(db, chapter, user)
+  334 │         content = str(body.content or chapter.get("content") or "")
+  335 │         if not content.strip():
+  336 │             raise HTTPException(status_code=400, detail="当前章节没有正文")
+  337 │         try:
+  338 │             profile = resolve_ai_profile(db.db.data_dir, "detector")
+  339 │             ai_service = SimpleAIService(
+  340 │                 api_key=profile.get("api_key") or None,
+  341 │                 base_url=profile.get("base_url") or None,
+  342 │                 model=profile.get("model") or None,
+  343 │             )
+  344 │             probability, level = ai_service.detect_ai_probability(content)
+  345 │             db.db.update_chapter_ai_probability(chapter_id, probability, level)
+  346 │             record_ai_usage(
+  347 │                 store=get_store(request),
+  348 │                 user=user,
+  349 │                 feature="ai_probability",
+  350 │                 ai_service=ai_service,
+  351 │                 book_id=int(chapter.get("book_id") or 0) or None,
+  352 │                 fallback_input=content,
+  353 │                 fallback_output=f"{probability}:{level}",
+  354 │                 fallback_token_source="unknown",
+  355 │             )
+  356 │         except Exception as exc:
+  357 │             logger.exception("AI 率检测失败")
+  358 │             raise HTTPException(status_code=500, detail="AI 率检测失败，请稍后重试") from exc
+  359 │         return {
+  360 │             "ok": True,
+  361 │             "chapter_id": chapter_id,
+  362 │             "probability": probability,
+  363 │             "level": level,
+  364 │             "item": db.get_chapter(chapter_id),
+  365 │         }
+  366 │     return await asyncio.to_thread(_sync)
+  367 │ 
+  368 │ 
+  369 │ @router.post("/chapters/{chapter_id}/polish-selection", response_model=dict[str, Any])  # TODO: 细化 response_model
+  370 │ async def polish_chapter_selection(
+  371 │     request: Request,

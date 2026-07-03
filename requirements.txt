@@ -1,0 +1,30 @@
+# Runtime dependencies only. Test/build tooling belongs in requirements-dev.txt.
+# PyQt6 已移除 — 已迁移至 Vue3 + Electron 技术栈
+fastapi>=0.115,<1
+uvicorn>=0.23,<1
+websockets>=12,<17
+python-multipart>=0.0.9
+python-docx==1.1.2
+bcrypt>=4,<6
+cryptography>=43,<45
+slowapi>=0.1,<1
+httpx>=0.27,<1
+
+# ============================================================
+# RAG 向量检索系统
+# 系统内置 FallbackEmbedder（无需额外安装可运行）
+# 推荐安装以下依赖以启用 API Embedding 和 Reranker 功能：
+# ------------------------------------------------------------
+# qdrant-client==1.17.1  # 已废弃，改用 HNSWStore（基于 faiss-cpu）
+# protobuf<6  # qdrant 依赖，已不再需要
+faiss-cpu>=1.14,<2  # HNSW 向量索引（替代 qdrant-client，有预编译 wheel 支持 Python 3.13）
+numpy>=2.0,<3  # faiss 依赖，向量矩阵化计算
+redis[hiredis]>=5.0.0,<9  # Redis 缓存层（书籍树/章节/分析状态缓存 + 分布式锁）
+
+# ============================================================
+# Agent 系统依赖
+# 无需额外安装，AgentGraph 为纯 Python 实现
+
+# ============================================================
+# 打包依赖
+# pip install pyinstaller>=6.0    # PyInstaller 打包

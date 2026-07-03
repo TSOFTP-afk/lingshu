@@ -1,0 +1,3163 @@
+灵枢智能写作工作台软件 V3.0 第 1 页 / 共 60 页
+===== 文件: main.py =====
+"""
+灵枢 v2.0 — FastAPI 后端入口（已从 PyQt6 迁移至 Vue3 + Electron）
+启动方式:
+python main.py # 默认启动 API 服务
+python main.py --electron # 在 Electron 壳中启动
+python -m uvicorn lingshu_api.main:app # 直接启动 API
+环境变量:
+LINGSHU_AI_API_KEY AI API 密钥
+LINGSHU_AI_BASE_URL AI API 地址（默认 https://api.openai.com/v1）
+LINGSHU_AI_MODEL AI 模型（默认 gpt-4o-mini）
+BOOKSTORE_DB_PATH 书城数据库路径
+BOOKSTORE_PUBLISH_TOKEN 发布令牌
+"""
+from __future__ import annotations
+import os
+import sys
+from pathlib import Path
+BASE_DIR = Path(__file__).resolve().parent
+# 确保项目在路径中
+if str(BASE_DIR) not in sys.path:
+sys.path.insert(0, str(BASE_DIR))
+APP_ICON = BASE_DIR / "packaging" / "app_icon.ico"
+def start_api_server(host: str = "127.0.0.1", port: int = 8787) -> None:
+"""启动 FastAPI 后端服务。"""
+import uvicorn
+print(f"[灵枢] 启动 API 服务: http://{host}:{port}")
+print(f"[灵枢] API 文档: http://{host}:{port}/docs")
+uvicorn.run(
+"lingshu_api.main:app",
+host=host,
+port=port,
+log_level="info",
+)
+def check_backend_health(host: str = "127.0.0.1", port: int = 8787) -> bool:
+"""检查后端是否已在运行。"""
+try:
+import urllib.request
+urllib.request.urlopen(f"http://{host}:{port}/api/health", timeout=2)
+return True
+except Exception:
+return False
+def main() -> None:
+— 1 —
+
+灵枢智能写作工作台软件 V3.0 第 2 页 / 共 60 页
+import argparse
+parser = argparse.ArgumentParser(description="灵枢 v2.0 — 智能写作工作台")
+parser.add_argument("--host", default="127.0.0.1", help="绑定地址 (默认 127.0.0.1)")
+parser.add_argument("--port", type=int, default=8787, help="绑定端口 (默认 8787)")
+parser.add_argument("--dev", action="store_true", help="开发模式（不检查端口占用）")
+args = parser.parse_args()
+if not args.dev and check_backend_health(args.host, args.port):
+print(f"[灵枢] API 服务已在 http://{args.host}:{args.port} 运行")
+print(f"[灵枢] 无需重复启动，按 Ctrl+C 退出")
+return
+start_api_server(args.host, args.port)
+if __name__ == "__main__":
+main()
+===== 文件: lingshu_api/main.py =====
+"""
+灵枢统一 FastAPI 应用入口。
+启动方式:
+uvicorn lingshu_api.main:app --host 0.0.0.0 --port 8787
+"""
+from __future__ import annotations
+import asyncio
+import logging
+import os
+import sys
+from contextlib import asynccontextmanager, suppress
+from pathlib import Path
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from starlette.responses import JSONResponse
+# 确保项目根目录在 sys.path 中（开发环境）
+_project_root = Path(__file__).resolve().parents[1]
+if str(_project_root) not in sys.path:
+sys.path.insert(0, str(_project_root))
+DEFAULT_DB_PATH = _project_root / "data" / "bookstore_demo.db"
+def create_app(db_path: Path | None = None) -> FastAPI:
+"""创建并配置 FastAPI 应用。"""
+from lingshu_api.dependencies import set_cloud_store, set_store, set_sync_service
+from lingshu_api.routers import admin, admin_auth, auth, bookshelf, bookstore, workspace
+from lingshu_api.services.book_sync import BookSyncService
+— 2 —
+
+灵枢智能写作工作台软件 V3.0 第 3 页 / 共 60 页
+from lingshu_api.services.db_bridge import WorkspaceDBProvider
+from novel_app.bookstore import BookstoreStore, CloudBookStore, _admin_usernames_from_env
+resolved_db_path = db_path or Path(os.environ.get("BOOKSTORE_DB_PATH", "") or DEFAULT_DB_PA
+TH)
+store = BookstoreStore(resolved_db_path)
+store.sync_admin_users(_admin_usernames_from_env())
+cloud_store = CloudBookStore(resolved_db_path)
+class _NonClosingWorkspaceDB:
+def __init__(self, target):
+self._target = target
+def __getattr__(self, name):
+return getattr(self._target, name)
+def close(self):
+return None
+workspace_provider = WorkspaceDBProvider()
+sync_service = BookSyncService(
+cloud_store=cloud_store,
+workspace_db_factory=lambda: _NonClosingWorkspaceDB(workspace_provider.get()),
+)
+# lifespan 替代已废弃的 on_event
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+# startup: 启动 WebSocket 心跳 + 清理过期管理员 Token
+from lingshu_api.ws.connection import get_ws_manager
+ping_task = asyncio.create_task(get_ws_manager().ping_loop())
+try:
+from lingshu_api.routers.admin_auth import _get_db_path, cleanup_on_startup
+cleanup_on_startup(_get_db_path(store))
+except Exception:
+pass
+yield
+# shutdown: 取消心跳任务
+ping_task.cancel()
+with suppress(asyncio.CancelledError):
+await ping_task
+workspace_provider.close()
+_disable_docs = os.environ.get("DISABLE_API_DOCS", "true").lower() in ("true", "1", "yes")
+app = FastAPI(
+title="灵枢 API",
+lifespan=lifespan,
+docs_url=None if _disable_docs else "/docs",
+redoc_url=None if _disable_docs else "/redoc",
+openapi_url=None if _disable_docs else "/openapi.json",
+)
+# 将 store / cloud_store / sync_service 写入 app.state
+— 3 —
+
+灵枢智能写作工作台软件 V3.0 第 4 页 / 共 60 页
+set_store(app, store)
+set_cloud_store(app, cloud_store)
+set_sync_service(app, sync_service)
+app.state.workspace_db_provider = workspace_provider
+# 限流
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_handler(request, exc):
+return JSONResponse(status_code=429, content={"detail": "请求过于频繁，请稍后再试"})
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request, exc):
+return JSONResponse(
+status_code=exc.status_code,
+content={"detail": exc.detail},
+)
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request, exc):
+errors = [
+{
+"field": ".".join(str(loc) for loc in err.get("loc", [])),
+"message": err.get("msg", ""),
+"type": err.get("type", ""),
+}
+for err in exc.errors()
+]
+return JSONResponse(
+status_code=422,
+content={"detail": "请求参数验证失败", "errors": errors},
+)
+@app.exception_handler(Exception)
+async def _generic_exception_handler(request, exc):
+logger = logging.getLogger("lingshu.api")
+logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+return JSONResponse(
+status_code=500,
+content={"detail": "服务器内部错误，请稍后重试"},
+)
+# CORS — 生产环境必须通过 CORS_ORIGINS 环境变量配置允许的源
+_cors_env = os.environ.get("CORS_ORIGINS", "").strip()
+if _cors_env:
+allow_origins = [origin.strip() for origin in _cors_env.split(",") if origin.strip()]
+else:
+# 开发环境默认值 — 仅允许已知端口
+allow_origins = [
+"http://127.0.0.1:5173", "http://localhost:5173",
+— 4 —
+
+灵枢智能写作工作台软件 V3.0 第 5 页 / 共 60 页
+"http://127.0.0.1:5174", "http://localhost:5174",
+"http://127.0.0.1:5175", "http://localhost:5175",
+"http://127.0.0.1:5176", "http://localhost:5176",
+"https://www.ling-shu.top", "https://ling-shu.top",
+]
+app.add_middleware(
+CORSMiddleware,
+allow_origins=allow_origins,
+allow_credentials=True,
+allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+allow_headers=[
+"Authorization",
+"Content-Type",
+"X-Publish-Token",
+"X-Client-KeyId",
+"X-Client-Ts",
+"X-Client-Sig",
+],
+)
+# 安全响应头中间件
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+response = await call_next(request)
+response.headers["X-Content-Type-Options"] = "nosniff"
+response.headers["X-Frame-Options"] = "DENY"
+response.headers["X-XSS-Protection"] = "1; mode=block"
+response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+# CSP 仅对页面资源有意义，对 /api/ JSON 响应反而会触发浏览器跨域误判（net::ERR_FAILED）
+path = request.scope.get("path", "")
+if not (path or "").startswith("/api/"):
+response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self
+'; style-src 'self'; img-src 'self' data: https:; connect-src 'self' ws: wss:;"
+return response
+@app.middleware("http")
+async def _admin_hmac_guard(request, call_next):
+path = request.url.path
+# 同时保护 /api/admin/ 和 /api/v1/admin/ 路径
+is_admin_path = (
+path.startswith("/api/admin/") or path.startswith("/api/v1/admin/")
+)
+is_login = path in ("/api/admin/auth/login", "/api/v1/admin/auth/login")
+if is_admin_path and not is_login:
+from fastapi import HTTPException
+from lingshu_api.routers.admin_auth import _admin_keys_configured, verify_admin_hma
+c_headers
+if not _admin_keys_configured(resolved_db_path):
+return JSONResponse(
+status_code=503,
+content={"detail": "管理后台未配置安全密钥，请联系管理员配置 HMAC 密钥后重试"},
+— 5 —
+
+灵枢智能写作工作台软件 V3.0 第 6 页 / 共 60 页
+)
+try:
+verify_admin_hmac_headers(resolved_db_path, request)
+except HTTPException as exc:
+return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}
+)
+return await call_next(request)
+@app.middleware("http")
+async def _api_v1_alias(request, call_next):
+path = str(request.scope.get("path") or "")
+if path.startswith("/api/v1/"):
+request.scope["lingshu.original_path"] = path
+aliased = "/api/" + path.removeprefix("/api/v1/")
+request.scope["path"] = aliased
+request.scope["raw_path"] = aliased.encode("ascii")
+return await call_next(request)
+# API 版本说明:
+# 当前所有 /api/ 路由即为 v1 版本
+# 未来 v2 路由将挂载在 /api/v2/ 前缀下
+# 客户端可通过 /api/v1/ 前缀访问（与 /api/ 等价）
+api_version = "v1"
+# 挂载 REST 路由（/api/ 前缀 — 向后兼容）
+app.include_router(auth.router)
+app.include_router(bookshelf.router)
+app.include_router(bookstore.router)
+app.include_router(admin_auth.router)
+app.include_router(admin.router)
+app.include_router(workspace.router)
+# 挂载阶段2新增路由
+from lingshu_api.routers import (
+analysis_v3,
+characters,
+rag,
+references,
+settings,
+skills,
+)
+from lingshu_api.routers import (
+export as export_router,
+)
+from lingshu_api.routers import (
+world as world_router,
+)
+app.include_router(analysis_v3.router)
+app.include_router(characters.router)
+app.include_router(world_router.router)
+app.include_router(skills.router)
+app.include_router(references.router)
+app.include_router(rag.router)
+app.include_router(export_router.router)
+— 6 —
+
+灵枢智能写作工作台软件 V3.0 第 7 页 / 共 60 页
+app.include_router(settings.router)
+# 挂载伏笔管理路由
+from lingshu_api.routers import foreshadows
+app.include_router(foreshadows.router)
+# 挂载网文写作技巧集路由
+from lingshu_api.routers import writing_techniques
+app.include_router(writing_techniques.router)
+# 挂载云端同步路由
+from lingshu_api.routers import cloud_books
+app.include_router(cloud_books.router)
+# 挂载 WebSocket 路由
+from lingshu_api.ws import analysis_v3_ws, chat, generation, review_ws
+app.include_router(generation.router)
+app.include_router(review_ws.router)
+app.include_router(analysis_v3_ws.router)
+app.include_router(chat.router)
+@app.get("/api/health")
+def health():
+return {"ok": True, "version": api_version}
+@app.get("/api/v1/health")
+def health_v1():
+return {"ok": True, "version": api_version}
+return app
+# 模块级 app 实例（兼容 uvicorn 直接导入）
+app = create_app()
+===== 文件: novel_app/analysis/mention_extractor.py =====
+from __future__ import annotations
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any
+from novel_app.analysis.entity_resolver import normalize_entity_alias, normalize_entity_type
+from novel_app.analysis.schemas_v3 import EntityMentionCandidate
+from novel_app.database import Database
+MENTION_MIN_CONFIDENCE = 0.55
+_QUOTE_PATTERNS = (
+("quoted_title", re.compile(r"《([^》]{2,40})》")),
+("quoted_name", re.compile(r"[“「『\"]([^”」』\"\n]{2,32})[”」』\"]")),
+)
+_PUNCTUATION_RE = re.compile(r"[，。！？、；：,.!?;:\n\r\t]")
+# 网文对话/动作模式：用于不依赖种子的 character 识别
+— 7 —
+
+灵枢智能写作工作台软件 V3.0 第 8 页 / 共 60 页
+# 形如"枫鱼道："、"叶芷笑道："、"老者怒道："、"少女冷声道："
+_DIALOGUE_VERBS = (
+"道", "说", "笑道", "怒道", "冷道", "喊道", "低声道", "沉声道", "淡淡道",
+"微笑道", "大笑道", "冷笑道", "叹道", "问道", "答道", "接口道", "接道",
+"续道", "说道", "喝道", "嗤笑道", "嘲讽道", "低喝道", "轻声道", "柔声道",
+"厉声道", "正色道", "皱眉道", "疑惑道", "惊讶道", "好奇道", "喃喃道",
+"自语道", "补充道", "解释道", "反问道", "打趣道", "调侃道", "感叹道",
+"冷哼道", "眯眼道", "眯着眼道", "歪头道", "挠头道", "摊手道", "耸肩道",
+# 补充常见"X声道"模式，避免"冷声道"等被拆成名字+动词
+"冷声道", "大声道", "高声道", "急声道", "颤声道", "怒声道", "朗声道",
+"平淡道", "平静道", "冷漠道", "淡然道", "茫然道", "恍惚道", "迟疑道",
+"犹豫道", "无奈道", "苦笑道", "微笑道", "痴笑道", "怪笑道", "狞笑道",
+"点头道", "摇头道", "抱拳道", "拱手道", "合十道", "敛衽道", "施礼道",
+)
+# 构建对话模式正则：2-4 个汉字后跟对话动词 + 冒号
+# 动词按长度降序排列，确保"笑道"在"道"之前匹配；名字用非贪婪 {2,4}? 避免吞掉动词首字
+_DIALOGUE_PATTERN = re.compile(
+r"([\u4e00-\u9fff]{2,4}?)(?:" + "|".join(sorted(_DIALOGUE_VERBS, key=len, reverse=True)) +
+r")[:：]"
+)
+# 动作模式：形如"枫鱼看着"、"叶芷转身"、"张三走向"
+# 需要句子边界前缀 + 名字尾字否定后顾，避免"枫鱼挠了"+"挠头"这类名字过捕
+_ACTION_VERBS = (
+"看着", "转身", "走向", "看向", "望向", "跑向", "冲向", "扑向", "退后",
+"上前", "站起", "坐下", "点头", "摇头", "皱眉", "微笑", "冷笑", "叹息",
+"挥手", "抬手", "伸手", "放手", "握拳", "闭眼", "睁眼", "回头", "抬头",
+"低头", "侧头", "歪头", "挠头", "转头", "回身", "偏头", "侧脸",
+"清了清嗓子", "整理了一下", "拍了拍",
+"拉住", "推开", "扶起", "搀扶", "拥抱", "拍了拍",
+)
+# 名字尾字不能是常见语法助词/副词，否则是误捕（如"枫鱼挠了"以"了"结尾，"叶芷当即"以"即"结尾，"枫鱼只能"以"能"结尾）
+_ACTION_NAME_SUFFIX_BLACKLIST = "了着过的地一就也还是在不没把被让给对向往到从和与及或刚即又再便才正已遂乃该本此其某能别"
+_ACTION_PATTERN = re.compile(
+r"(?:^|[。！？\n\r“”「『（,，；、\s])([\u4e00-\u9fff]{2,4}?)(?<![" + _ACTION_NAME_SUFFIX_BLACKLIST +
+r"])(?:" + "|".join(sorted(_ACTION_VERBS, key=len, reverse=True)) + r")"
+)
+# 否定前缀：这些词后跟对话/动作动词时不是人名
+_NEGATIVE_PREFIXES = {
+"然后", "于是", "突然", "忽然", "随即", "随后", "马上", "立刻", "顿时",
+"这时", "那是", "这是", "他们", "她们", "它们", "我们", "你们", "大家",
+"众人", "有人", "那人", "此人", "对方", "一人", "两人", "几人", "众人",
+"少年", "少女", "老者", "中年", "青年", "男子", "女子", "书生", "和尚",
+"道士", "掌柜", "店小二", "管家", "护卫", "侍女", "丫鬟", "下人", "仆人",
+# 常见非人名短语
+"一边", "一下", "一阵", "一些", "一点", "不由", "不能", "不会", "不要",
+"轻轻", "顺便", "两个人", "你们都", "大家都", "大家都别", "只见", "正是", "好像",
+"似乎", "或许", "也许", "应该", "本来", "其实", "毕竟", "而且", "但是",
+# 名字+副词组合（误捕）
+"枫鱼只能", "枫鱼刚", "枫鱼当即", "叶芷当即",
+}
+_SUFFIX_RE = re.compile(
+r"[\u4e00-\u9fff]{1,12}(?:"
+r"宗门|门派|宗|派|阁|楼|宫|城|国|谷|山|院|司|会|盟|族|军|卫|队|殿|府|塔|"
+— 8 —
+
+灵枢智能写作工作台软件 V3.0 第 9 页 / 共 60 页
+r"秘境|洞天|世界|大陆|界|域|"
+r"灵根|境界|体系|规则|功法|剑法|心法|法诀|功|法|诀|"
+r"剑|刀|珠|鼎|镜|令|印|阵|符|丹"
+r")"
+)
+_TRIM_PREFIXES = (
+"主角获得",
+"主角使用",
+"众人进入",
+"他们进入",
+"她们进入",
+"他进入",
+"她进入",
+"随后获得",
+"随后使用",
+"进入",
+"拜入",
+"加入",
+"来到",
+"来自",
+"前往",
+"抵达",
+"攻打",
+"创建",
+"建立",
+"发现",
+"获得",
+"使用",
+"祭出",
+"修炼",
+"参悟",
+)
+@dataclass(frozen=True)
+class MentionSeed:
+text: str
+entity_type: str
+source_rule: str
+confidence: float
+metadata: dict[str, Any]
+class MentionExtractor:
+def __init__(self, seeds: Iterable[MentionSeed] | None = None, *, min_confidence: float = M
+ENTION_MIN_CONFIDENCE) -> None:
+self.seeds = tuple(seed for seed in (seeds or ()) if normalize_entity_alias(seed.text))
+self.min_confidence = max(0.0, min(1.0, float(min_confidence)))
+self._llm_extractor: LLMentionExtractor | None = None
+def enable_llm(self, llm_extractor: LLMentionExtractor) -> None:
+"""启用 LLM 增强抽取。传入 LLMentionExtractor 实例。"""
+self._llm_extractor = llm_extractor
+@classmethod
+— 9 —
+
+灵枢智能写作工作台软件 V3.0 第 10 页 / 共 60 页
+def from_database(cls, database: Database, book_id: int, *, min_confidence: float = MENTION
+_MIN_CONFIDENCE) -> MentionExtractor:
+seeds: list[MentionSeed] = []
+for character in database.list_characters(int(book_id)):
+name = str(character["name"] or "").strip()
+if name:
+seeds.append(
+MentionSeed(
+text=name,
+entity_type="character",
+source_rule="formal_character",
+confidence=0.95,
+metadata={"source_table": "characters", "source_id": int(character["id"
+])},
+)
+)
+for entry in database.list_world_entries(int(book_id)):
+entry_id = int(entry.get("id") or 0)
+if entry_id <= 0:
+continue
+name = str(entry.get("name") or "").strip()
+if name:
+seeds.append(
+MentionSeed(
+text=name,
+entity_type=_world_category_type(str(entry.get("category") or "")),
+source_rule="formal_world_entry",
+confidence=0.9,
+metadata={"source_table": "world_entries", "source_id": entry_id},
+)
+)
+return cls(seeds, min_confidence=min_confidence)
+def extract_from_blocks(
+self,
+*,
+book_id: int,
+run_id: int,
+blocks: Iterable[Any],
+) -> list[EntityMentionCandidate]:
+by_key: dict[tuple[str, int, int, str, str], EntityMentionCandidate] = {}
+for block in blocks:
+block_data = _block_dict(block)
+text = str(block_data.get("text") or "")
+if not text:
+continue
+for candidate in self._seed_mentions(book_id, run_id, block_data, text):
+self._keep_best(by_key, candidate)
+for candidate in self._quoted_mentions(book_id, run_id, block_data, text):
+self._keep_best(by_key, candidate)
+for candidate in self._suffix_mentions(book_id, run_id, block_data, text):
+self._keep_best(by_key, candidate)
+# 不依赖种子的 character 识别：对话/动作模式
+for candidate in self._dialogue_mentions(book_id, run_id, block_data, text):
+self._keep_best(by_key, candidate)
+— 10 —
+
+灵枢智能写作工作台软件 V3.0 第 11 页 / 共 60 页
+# LLM 增强抽取：对规则未覆盖的 block 调用 LLM 补充
+if self._llm_extractor is not None:
+llm_candidates = self._llm_extractor.extract(
+book_id=book_id,
+run_id=run_id,
+blocks=list(blocks),
+existing_candidates=dict(by_key),
+)
+for candidate in llm_candidates:
+self._keep_best(by_key, candidate)
+return sorted(by_key.values(), key=lambda item: (item.chapter_id or 0, item.char_start,
+item.char_end, item.normalized_text))
+def _seed_mentions(
+self,
+book_id: int,
+run_id: int,
+block: dict[str, Any],
+text: str,
+) -> Iterable[EntityMentionCandidate]:
+for seed in self.seeds:
+if seed.confidence < self.min_confidence:
+continue
+for match in re.finditer(re.escape(seed.text), text, flags=re.IGNORECASE):
+yield self._candidate(
+book_id=book_id,
+run_id=run_id,
+block=block,
+text=text,
+local_start=match.start(),
+local_end=match.end(),
+entity_type=seed.entity_type,
+confidence=seed.confidence,
+source_rule=seed.source_rule,
+metadata=seed.metadata,
+)
+def _quoted_mentions(
+self,
+book_id: int,
+run_id: int,
+block: dict[str, Any],
+text: str,
+) -> Iterable[EntityMentionCandidate]:
+for source_rule, pattern in _QUOTE_PATTERNS:
+for match in pattern.finditer(text):
+value = str(match.group(1) or "").strip()
+if not _looks_like_entity_name(value):
+continue
+confidence = 0.72 if source_rule == "quoted_title" else 0.62
+if confidence < self.min_confidence:
+continue
+yield self._candidate(
+book_id=book_id,
+— 11 —
+
+灵枢智能写作工作台软件 V3.0 第 12 页 / 共 60 页
+run_id=run_id,
+block=block,
+text=text,
+local_start=match.start(1),
+local_end=match.end(1),
+entity_type="concept",
+confidence=confidence,
+source_rule=source_rule,
+metadata={},
+)
+def _suffix_mentions(
+self,
+book_id: int,
+run_id: int,
+block: dict[str, Any],
+text: str,
+) -> Iterable[EntityMentionCandidate]:
+for match in _SUFFIX_RE.finditer(text):
+value, offset = _clean_suffix_value(match.group(0))
+if not _looks_like_entity_name(value):
+continue
+confidence = 0.58
+if confidence < self.min_confidence:
+continue
+local_start = match.start() + offset
+local_end = local_start + len(value)
+yield self._candidate(
+book_id=book_id,
+run_id=run_id,
+block=block,
+text=text,
+local_start=local_start,
+local_end=local_end,
+entity_type=_suffix_type(value),
+confidence=confidence,
+source_rule="suffix_pattern",
+metadata={},
+)
+def _dialogue_mentions(
+self,
+book_id: int,
+run_id: int,
+block: dict[str, Any],
+text: str,
+) -> Iterable[EntityMentionCandidate]:
+"""基于网文对话/动作模式识别 character，不依赖种子。
+匹配形如"枫鱼道："、"叶芷笑道："、"张三看着"的模式。
+这些模式在网文中高频出现，可高效识别人物名字。
+"""
+for match in _DIALOGUE_PATTERN.finditer(text):
+name = str(match.group(1) or "").strip()
+if not _looks_like_character_name(name):
+— 12 —
+
+灵枢智能写作工作台软件 V3.0 第 13 页 / 共 60 页
+continue
+confidence = 0.65 # 对话模式置信度高于 suffix
+if confidence < self.min_confidence:
+continue
+local_start = match.start(1)
+local_end = match.end(1)
+yield self._candidate(
+book_id=book_id,
+run_id=run_id,
+block=block,
+text=text,
+local_start=local_start,
+local_end=local_end,
+entity_type="character",
+confidence=confidence,
+source_rule="dialogue_pattern",
+metadata={},
+)
+for match in _ACTION_PATTERN.finditer(text):
+name = str(match.group(1) or "").strip()
+if not _looks_like_character_name(name):
+continue
+confidence = 0.6 # 动作模式置信度略低
+if confidence < self.min_confidence:
+continue
+local_start = match.start(1)
+local_end = match.end(1)
+yield self._candidate(
+book_id=book_id,
+run_id=run_id,
+block=block,
+text=text,
+local_start=local_start,
+local_end=local_end,
+entity_type="character",
+confidence=confidence,
+source_rule="action_pattern",
+metadata={},
+)
+def _candidate(
+self,
+*,
+book_id: int,
+run_id: int,
+block: dict[str, Any],
+text: str,
+local_start: int,
+local_end: int,
+entity_type: str,
+confidence: float,
+source_rule: str,
+metadata: dict[str, Any],
+) -> EntityMentionCandidate:
+quote_text = text[local_start:local_end]
+— 13 —
+
+灵枢智能写作工作台软件 V3.0 第 14 页 / 共 60 页
+block_start = _int(block.get("char_start"), 0)
+chapter_id = _int_or_none(block.get("chapter_id"))
+return EntityMentionCandidate.create(
+book_id=book_id,
+run_id=run_id,
+entity_type=normalize_entity_type(entity_type, "concept"),
+normalized_text=normalize_entity_alias(quote_text),
+quote_text=quote_text,
+chapter_id=chapter_id,
+block_uid=str(block.get("block_uid") or ""),
+char_start=block_start + int(local_start),
+char_end=block_start + int(local_end),
+confidence=confidence,
+source_rule=source_rule,
+metadata={
+**metadata,
+"block_local_start": int(local_start),
+"block_local_end": int(local_end),
+},
+)
+@staticmethod
+def _keep_best(
+by_key: dict[tuple[str, int, int, str, str], EntityMentionCandidate],
+candidate: EntityMentionCandidate,
+) -> None:
+if not candidate.quote_text or candidate.confidence < MENTION_MIN_CONFIDENCE:
+return
+key = (
+candidate.block_uid,
+candidate.char_start,
+candidate.char_end,
+candidate.entity_type,
+candidate.normalized_text,
+)
+existing = by_key.get(key)
+if existing is None or candidate.confidence > existing.confidence:
+by_key[key] = candidate
+def _block_dict(value: Any) -> dict[str, Any]:
+if isinstance(value, dict):
+return value
+result = dict(value)
+if "chapter_id" not in result:
+chapter_ids = result.get("chapter_ids")
+if isinstance(chapter_ids, list) and chapter_ids:
+result["chapter_id"] = chapter_ids[0]
+return result
+def _world_category_type(category: str) -> str:
+text = str(category or "")
+if any(key in text for key in ("人物", "角色")):
+return "character"
+— 14 —
+
+灵枢智能写作工作台软件 V3.0 第 15 页 / 共 60 页
+if any(key in text for key in ("势力", "组织", "宗门", "门派", "家族")):
+return "organization"
+if any(key in text for key in ("地点", "地理", "城市", "秘境", "地图")):
+return "location"
+if any(key in text for key in ("物品", "法宝", "道具", "装备")):
+return "item"
+return "concept"
+def _suffix_type(value: str) -> str:
+if value.endswith(("宗门", "门派", "宗", "派", "阁", "楼", "宫", "院", "司", "会", "盟", "族", "军", "卫",
+"队")):
+return "organization"
+if value.endswith(("城", "国", "谷", "山", "殿", "府", "塔", "秘境", "洞天", "世界", "大陆", "界", "域")):
+return "location"
+if value.endswith(("剑", "刀", "珠", "鼎", "镜", "令", "印", "阵", "符", "丹")):
+return "item"
+return "concept"
+def _clean_suffix_value(value: str) -> tuple[str, int]:
+clean = str(value or "").strip()
+offset = 0
+changed = True
+while changed:
+changed = False
+for prefix in _TRIM_PREFIXES:
+if clean.startswith(prefix) and len(clean) > len(prefix) + 1:
+clean = clean[len(prefix):]
+offset += len(prefix)
+changed = True
+break
+return clean, offset
+def _looks_like_entity_name(value: str) -> bool:
+text = str(value or "").strip()
+if len(text) < 2 or len(text) > 40:
+return False
+if _PUNCTUATION_RE.search(text):
+return False
+if normalize_entity_alias(text) in {"他说", "她说", "他们说", "这一切", "不知道", "为什么"}:
+return False
+return bool(normalize_entity_alias(text))
+def _looks_like_character_name(value: str) -> bool:
+"""对话/动作模式提取的候选名校验，比 _looks_like_entity_name 更严格。
+过滤泛称（少年/少女/老者等）、否定前缀、过短/过长名字。
+"""
+text = str(value or "").strip()
+if len(text) < 2 or len(text) > 4:
+return False
+if _PUNCTUATION_RE.search(text):
+— 15 —
+
+灵枢智能写作工作台软件 V3.0 第 16 页 / 共 60 页
+return False
+normalized = normalize_entity_alias(text)
+if not normalized:
+return False
+# 过滤泛称和否定前缀
+if normalized in _NEGATIVE_PREFIXES:
+return False
+if normalized in {"他说", "她说", "他们说", "这一切", "不知道", "为什么"}:
+return False
+# 过滤纯方位词/时间词
+if normalized in {"前面", "后面", "左边", "右边", "上面", "下面", "今天", "明天", "昨天"}:
+return False
+return True
+def _int(value: Any, default: int = 0) -> int:
+try:
+return int(value)
+except (TypeError, ValueError):
+return default
+def _int_or_none(value: Any) -> int | None:
+try:
+return int(value)
+except (TypeError, ValueError):
+return None
+class LLMentionExtractor:
+"""LLM 增强实体提及抽取的抽象基类。
+子类需要实现 `extract()` 方法，调用 LLM 对文本块进行提及抽取，
+返回 EntityMentionCandidate 列表。LLM 抽取结果只进候选池，
+不直接写入正式层。
+使用方式：
+extractor = MentionExtractor.from_database(db, book_id)
+extractor.enable_llm(MyLLMentionExtractor(ai_service, llm_cache))
+mentions = extractor.extract_from_blocks(...)
+"""
+def extract(
+self,
+*,
+book_id: int,
+run_id: int,
+blocks: list[Any],
+existing_candidates: dict[tuple[str, int, int, str, str], EntityMentionCandidate],
+) -> list[EntityMentionCandidate]:
+"""调用 LLM 对 blocks 进行提及抽取，返回新的候选列表。
+默认实现返回空列表（不调用 LLM）。子类应重写此方法。
+"""
+return []
+— 16 —
+
+灵枢智能写作工作台软件 V3.0 第 17 页 / 共 60 页
+===== 文件: novel_app/analysis/coreference.py =====
+"""实体共指消解 — 章内同名聚类 + 跨章合并 + 称谓链消解。
+Phase 1: 同名/规范化同名聚类（原有逻辑）
+Phase 2: 称谓链消解（师父→他、师姐→她等代词/称谓关联）
+Phase 3: 跨章合并（名称相似 + 别名显式 + 时间线不冲突）
+"""
+from __future__ import annotations
+import logging
+import os
+import time
+from collections import defaultdict
+from collections.abc import Iterable
+from typing import Any
+from novel_app.analysis.entity_resolver import normalize_entity_alias, normalize_entity_type, s
+table_entity_uid
+from novel_app.analysis.schemas_v3 import ANALYSIS_V3_SCHEMA_VERSION, ResolvedEntityCandidate
+# ---------------------------------------------------------------------------
+# 称谓链规则：代词/称谓 → 可能指向的实体类型
+# ---------------------------------------------------------------------------
+_APPELLATION_PATTERNS: list[tuple[str, str, float]] = [
+# (称谓关键词, 推断的实体类型, 置信度加成)
+("师父", "character", 0.15),
+("师傅", "character", 0.15),
+("师尊", "character", 0.15),
+("师叔", "character", 0.12),
+("师伯", "character", 0.12),
+("师姐", "character", 0.12),
+("师妹", "character", 0.12),
+("师兄", "character", 0.12),
+("师弟", "character", 0.12),
+("道友", "character", 0.08),
+("前辈", "character", 0.08),
+("晚辈", "character", 0.08),
+("掌门", "character", 0.10),
+("长老", "character", 0.10),
+("阁主", "character", 0.10),
+("城主", "character", 0.10),
+("族长", "character", 0.10),
+("父亲", "character", 0.15),
+("母亲", "character", 0.15),
+("兄长", "character", 0.12),
+("姐姐", "character", 0.12),
+("弟弟", "character", 0.12),
+("妹妹", "character", 0.12),
+("爷爷", "character", 0.15),
+("奶奶", "character", 0.15),
+]
+# 名称相似度阈值：编辑距离 / max(len_a, len_b) < 此值视为相似
+_NAME_SIMILARITY_THRESHOLD = 0.45
+_VECTOR_BUCKET_LIMIT = int(os.environ.get("LINGSHU_ANALYSIS_V3_COREFERENCE_VECTOR_BUCKET_LIMIT"
+— 17 —
+
+灵枢智能写作工作台软件 V3.0 第 18 页 / 共 60 页
+, "600") or 600)
+_PAIR_CHECK_LIMIT = int(os.environ.get("LINGSHU_ANALYSIS_V3_COREFERENCE_PAIR_LIMIT", "350000")
+or 350000)
+_TIME_LIMIT_SECONDS = int(os.environ.get("LINGSHU_ANALYSIS_V3_COREFERENCE_TIMEOUT_SECONDS", "54
+0") or 540)
+logger = logging.getLogger(__name__)
+class CoreferenceResolver:
+def __init__(self, vector_store: Any | None = None) -> None:
+self._vector_store = vector_store
+def resolve_mentions(
+self,
+*,
+book_id: int,
+mentions: Iterable[dict[str, Any]],
+) -> list[ResolvedEntityCandidate]:
+mention_list = list(mentions)
+# Phase 1: 同名/规范化同名聚类
+buckets = self._phase1_same_name_clustering(book_id, mention_list)
+# Phase 2: 称谓链消解 — 将称谓型 mention 关联到最近的同名实体
+self._phase2_appellation_linking(buckets, mention_list)
+# Phase 3: 跨章合并 — 名称相似 + 别名显式 + 时间线不冲突
+buckets = self._phase3_cross_chapter_merge(buckets, book_id)
+# 构建最终实体列表
+entities: list[ResolvedEntityCandidate] = []
+for (entity_type, normalized), bucket in buckets.items():
+quotes = [str(item.get("quote_text") or "").strip() for item in bucket if str(item.
+get("quote_text") or "").strip()]
+if not quotes:
+continue
+canonical = self._canonical_name(quotes)
+aliases = tuple(sorted({quote for quote in quotes if quote != canonical}))
+confidences = [float(item.get("confidence") or 0.0) for item in bucket]
+confidence = round(sum(confidences) / max(1, len(confidences)), 3)
+mention_uids = tuple(str(item.get("mention_uid") or "") for item in bucket if str(i
+tem.get("mention_uid") or "").strip())
+source_rule = self._source_rule(bucket)
+entity_uid = stable_entity_uid(entity_type, canonical or normalized, book_id=book_i
+d)
+chapter_ids = sorted({
+int(item.get("chapter_id") or 0)
+for item in bucket
+if _int_or_none(item.get("chapter_id")) is not None
+})
+entities.append(
+ResolvedEntityCandidate(
+entity_uid=entity_uid,
+entity_type=entity_type,
+— 18 —
+
+灵枢智能写作工作台软件 V3.0 第 19 页 / 共 60 页
+canonical_name=canonical,
+aliases=aliases,
+mention_uids=mention_uids,
+confidence=confidence,
+status="candidate",
+source_rule=source_rule,
+metadata={
+"schema_version": ANALYSIS_V3_SCHEMA_VERSION,
+"normalized_text": normalized,
+"mention_count": len(mention_uids),
+"chapter_ids": chapter_ids,
+"source_rules": sorted({str(item.get("source_rule") or "") for item in
+bucket if str(item.get("source_rule") or "").strip()}),
+},
+)
+)
+return sorted(entities, key=lambda item: (item.entity_type, item.canonical_name, item.e
+ntity_uid))
+# ------------------------------------------------------------------
+# Phase 1: 同名/规范化同名聚类
+# ------------------------------------------------------------------
+def _phase1_same_name_clustering(
+self,
+book_id: int,
+mentions: list[dict[str, Any]],
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
+buckets: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+for mention in mentions:
+entity_type = normalize_entity_type(mention.get("entity_type"), "concept")
+normalized = normalize_entity_alias(mention.get("normalized_text") or mention.get("
+quote_text"))
+if not normalized:
+continue
+buckets[(entity_type, normalized)].append(dict(mention))
+return buckets
+# ------------------------------------------------------------------
+# Phase 2: 称谓链消解
+# ------------------------------------------------------------------
+def _phase2_appellation_linking(
+self,
+buckets: dict[tuple[str, str], list[dict[str, Any]]],
+mentions: list[dict[str, Any]],
+) -> None:
+"""将称谓型 mention（如"师父"、"他"）关联到最近的同名实体候选。
+策略：对每个称谓 mention，在同一章节内查找最近的、类型匹配的实体候选，
+将该 mention 合并到对应 bucket 中。
+"""
+appellation_mentions = self._collect_appellation_mentions(mentions)
+if not appellation_mentions:
+return
+— 19 —
+
+灵枢智能写作工作台软件 V3.0 第 20 页 / 共 60 页
+# 构建 chapter → 按位置排序的 mention 列表
+chapter_mentions: dict[int, list[dict[str, Any]]] = defaultdict(list)
+for mention in mentions:
+chapter_id = _int_or_none(mention.get("chapter_id"))
+if chapter_id is not None:
+chapter_mentions[chapter_id].append(dict(mention))
+# 为每个 bucket 记录出现位置，方便查找最近实体
+bucket_positions: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
+for key, bucket in buckets.items():
+for item in bucket:
+chapter_id = _int_or_none(item.get("chapter_id"))
+char_start = int(item.get("char_start") or 0)
+if chapter_id is not None:
+bucket_positions[key].append((chapter_id, char_start))
+for appellation in appellation_mentions:
+chapter_id = _int_or_none(appellation.get("chapter_id"))
+if chapter_id is None:
+continue
+char_start = int(appellation.get("char_start") or 0)
+appellation_type = str(appellation.get("entity_type") or "character")
+best_key: tuple[str, str] | None = None
+best_distance = float("inf")
+for key, positions in bucket_positions.items():
+key_type = key[0]
+if key_type != appellation_type:
+continue
+for pos_chapter, pos_char in positions:
+if pos_chapter != chapter_id:
+continue
+distance = abs(pos_char - char_start)
+if distance < best_distance:
+best_distance = distance
+best_key = key
+if best_key is not None and best_distance < 500:
+buckets[best_key].append(appellation)
+def _collect_appellation_mentions(self, mentions: list[dict[str, Any]]) -> list[dict[str, A
+ny]]:
+"""收集称谓型 mention（quote_text 匹配称谓模式的）。"""
+result: list[dict[str, Any]] = []
+for mention in mentions:
+quote = str(mention.get("quote_text") or "").strip()
+if not quote:
+continue
+for pattern_text, _entity_type, _ in _APPELLATION_PATTERNS:
+if quote == pattern_text or quote.endswith(pattern_text):
+result.append(dict(mention))
+break
+return result
+# ------------------------------------------------------------------
+— 20 —
+
+灵枢智能写作工作台软件 V3.0 第 21 页 / 共 60 页
+# Phase 3: 跨章合并
+# ------------------------------------------------------------------
+def _phase3_cross_chapter_merge(
+self,
+buckets: dict[tuple[str, str], list[dict[str, Any]]],
+book_id: int,
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
+"""合并跨章的同实体候选。
+合并条件（全部满足）：
+1. 同一 entity_type
+2. 名称相似度超过阈值（编辑距离），或一方是另一方的别名/子串
+3. 时间线不冲突（两个候选的 chapter_ids 不重叠，或重叠但 quote_text 不矛盾）
+"""
+keys = list(buckets.keys())
+merged: set[tuple[str, str]] = set()
+merges: list[tuple[tuple[str, str], tuple[str, str]]] = []
+allow_vector = self._vector_store is not None and len(keys) <= _VECTOR_BUCKET_LIMIT
+pair_checks = 0
+started_at = time.monotonic()
+timed_out = False
+if self._vector_store is not None and not allow_vector:
+logger.info(
+"Skip vector-assisted coreference merge: bucket_count=%s limit=%s book_id=%s",
+len(keys),
+_VECTOR_BUCKET_LIMIT,
+book_id,
+)
+for i, key_a in enumerate(keys):
+if key_a in merged:
+continue
+for j in range(i + 1, len(keys)):
+pair_checks += 1
+if pair_checks > _PAIR_CHECK_LIMIT:
+logger.warning(
+"Stop coreference cross-chapter merge after %s pair checks: bucket_coun
+t=%s book_id=%s",
+pair_checks,
+len(keys),
+book_id,
+)
+break
+if _TIME_LIMIT_SECONDS > 0 and pair_checks % 1000 == 0 and time.monotonic() - s
+tarted_at > _TIME_LIMIT_SECONDS:
+timed_out = True
+logger.warning(
+"Stop coreference cross-chapter merge after %.1fs: bucket_count=%s book
+_id=%s pair_checks=%s",
+time.monotonic() - started_at,
+len(keys),
+book_id,
+pair_checks,
+)
+— 21 —
+
+灵枢智能写作工作台软件 V3.0 第 22 页 / 共 60 页
+break
+key_b = keys[j]
+if key_b in merged:
+continue
+if key_a[0] != key_b[0]:
+continue
+if self._should_merge_buckets(buckets[key_a], buckets[key_b], allow_vector=allo
+w_vector):
+merges.append((key_a, key_b))
+merged.add(key_b)
+if timed_out or pair_checks > _PAIR_CHECK_LIMIT:
+break
+# 执行合并
+for key_a, key_b in merges:
+buckets[key_a].extend(buckets.pop(key_b, []))
+return buckets
+def _should_merge_buckets(
+self,
+bucket_a: list[dict[str, Any]],
+bucket_b: list[dict[str, Any]],
+*,
+allow_vector: bool = True,
+) -> bool:
+"""判断两个 bucket 是否应该合并。"""
+names_a = {str(item.get("quote_text") or "").strip() for item in bucket_a}
+names_b = {str(item.get("quote_text") or "").strip() for item in bucket_b}
+# 条件 1: 别名显式 — 一方的 quote 是另一方的子串或别名
+for name_a in names_a:
+for name_b in names_b:
+if not name_a or not name_b:
+continue
+if name_a == name_b:
+return True
+short, long = (name_a, name_b) if len(name_a) < len(name_b) else (name_b, name_
+a)
+if len(short) >= 2 and long.startswith(short):
+return True
+# 条件 2: 名称相似度
+for name_a in names_a:
+for name_b in names_b:
+if not name_a or not name_b:
+continue
+if _name_similarity(name_a, name_b) >= (1.0 - _NAME_SIMILARITY_THRESHOLD):
+return True
+# 条件 3: 向量相似度辅助 — 如果两个 bucket 的上下文向量高度相似，也合并
+if allow_vector and self._vector_store is not None:
+try:
+vector_score = self._vector_similarity_score(bucket_a, bucket_b)
+if vector_score >= 0.75:
+— 22 —
+
+灵枢智能写作工作台软件 V3.0 第 23 页 / 共 60 页
+return True
+except Exception:
+pass
+return False
+def _vector_similarity_score(
+self,
+bucket_a: list[dict[str, Any]],
+bucket_b: list[dict[str, Any]],
+) -> float:
+"""利用向量存储计算两个 bucket 的上下文相似度。"""
+if not self._vector_store:
+return 0.0
+# 取每个 bucket 的第一个 mention 的 quote_text 作为查询
+quote_a = str(bucket_a[0].get("quote_text") or "").strip() if bucket_a else ""
+quote_b = str(bucket_b[0].get("quote_text") or "").strip() if bucket_b else ""
+if not quote_a or not quote_b:
+return 0.0
+book_id = int(bucket_a[0].get("book_id") or 0)
+if not book_id:
+return 0.0
+# 用 quote_a 搜索 entity_summaries，看是否命中 bucket_b 的实体
+results_a = self._vector_store.search_similar_entities(book_id, quote_a, top_k=3, score
+_threshold=0.5)
+results_b = self._vector_store.search_similar_entities(book_id, quote_b, top_k=3, score
+_threshold=0.5)
+# 如果两者的搜索结果有重叠（命中同一实体），说明上下文相似
+uids_a = {r.get("payload", {}).get("entity_uid") for r in results_a}
+uids_b = {r.get("payload", {}).get("entity_uid") for r in results_b}
+overlap = uids_a & uids_b
+if overlap:
+# 取重叠实体的最高分数
+max_score = 0.0
+for r in results_a + results_b:
+if r.get("payload", {}).get("entity_uid") in overlap:
+max_score = max(max_score, r.get("score", 0.0))
+return min(1.0, max_score)
+return 0.0
+# ------------------------------------------------------------------
+# 工具方法
+# ------------------------------------------------------------------
+@staticmethod
+def _canonical_name(quotes: list[str]) -> str:
+counts: dict[str, int] = defaultdict(int)
+for quote in quotes:
+counts[quote] += 1
+return sorted(counts, key=lambda item: (-counts[item], -len(item), item))[0]
+@staticmethod
+def _source_rule(mentions: list[dict[str, Any]]) -> str:
+counts: dict[str, int] = defaultdict(int)
+for mention in mentions:
+— 23 —
+
+灵枢智能写作工作台软件 V3.0 第 24 页 / 共 60 页
+source_rule = str(mention.get("source_rule") or "auto_coreference")
+counts[source_rule] += 1
+return sorted(counts, key=lambda item: (-counts[item], item))[0] if counts else "auto_c
+oreference"
+# ---------------------------------------------------------------------------
+# 工具函数
+# ---------------------------------------------------------------------------
+def _name_similarity(a: str, b: str) -> float:
+"""计算两个名称的相似度（0~1），基于编辑距离。"""
+if not a or not b:
+return 0.0
+if a == b:
+return 1.0
+dist = _edit_distance(a, b)
+max_len = max(len(a), len(b))
+return 1.0 - (dist / max_len)
+def _edit_distance(a: str, b: str) -> int:
+"""Levenshtein 编辑距离。"""
+n, m = len(a), len(b)
+if n == 0:
+return m
+if m == 0:
+return n
+prev = list(range(m + 1))
+curr = [0] * (m + 1)
+for i in range(1, n + 1):
+curr[0] = i
+for j in range(1, m + 1):
+cost = 0 if a[i - 1] == b[j - 1] else 1
+curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+prev, curr = curr, prev
+return prev[m]
+def _int_or_none(value: Any) -> int | None:
+try:
+result = int(value)
+except (TypeError, ValueError):
+return None
+return result if result > 0 else None
+===== 文件: novel_app/analysis/semantic_chunker.py =====
+from __future__ import annotations
+import re
+from dataclasses import dataclass
+from typing import Any
+from novel_app.analysis.schemas_v3 import SemanticBlock, stable_hash
+SEMANTIC_CHUNKER_VERSION = "semantic_chunker_v1"
+— 24 —
+
+灵枢智能写作工作台软件 V3.0 第 25 页 / 共 60 页
+@dataclass(frozen=True)
+class TextSpan:
+start: int
+end: int
+text: str
+reason: str
+class SemanticChunker:
+def __init__(
+self,
+*,
+target_chars: int = 6000,
+max_chars: int = 8000,
+min_sentence_cut_chars: int = 1200,
+overlap_sentences: int = 1,
+) -> None:
+self.target_chars = max(1, int(target_chars))
+self.max_chars = max(self.target_chars, int(max_chars))
+self.min_sentence_cut_chars = max(200, int(min_sentence_cut_chars))
+self.overlap_sentences = max(0, int(overlap_sentences))
+def chunk_chapters(self, book_id: int, chapters: list[dict[str, Any]], *, pipeline_version:
+str) -> list[SemanticBlock]:
+blocks: list[SemanticBlock] = []
+for chapter in chapters:
+chapter_id = self._int_or_none(chapter.get("id"))
+title = str(chapter.get("title") or "")
+content = str(chapter.get("content") or "")
+if not content.strip():
+continue
+chapter_content_hash = stable_hash(content)
+local_index = 1
+for span in self._chapter_spans(content):
+block = SemanticBlock.from_text_span(
+book_id=book_id,
+chapter_id=chapter_id,
+chapter_title=title,
+local_index=local_index,
+chunk_index=len(blocks) + 1,
+char_start=span.start,
+char_end=span.end,
+text=span.text,
+pipeline_version=pipeline_version,
+split_reason=span.reason,
+chapter_content_hash=chapter_content_hash,
+)
+blocks.append(block)
+local_index += 1
+# 句子级重叠窗口：为每个 block 添加前一个 block 末尾的 overlap_sentences 个句子
+if self.overlap_sentences > 0 and len(blocks) > 1:
+blocks = self._apply_overlap_window(blocks)
+return blocks
+— 25 —
+
+灵枢智能写作工作台软件 V3.0 第 26 页 / 共 60 页
+def _chapter_spans(self, content: str) -> list[TextSpan]:
+source = str(content or "")
+scene_spans = self._scene_spans(source)
+blocks: list[TextSpan] = []
+for scene in scene_spans:
+pieces = self._paragraph_spans(source, scene.start, scene.end)
+if not pieces:
+continue
+current: list[TextSpan] = []
+def flush(reason: str) -> None:
+nonlocal current
+if not current:
+return
+start = current[0].start
+end = current[-1].end
+blocks.extend(self._finalize_span(source, start, end, reason))
+current = []
+for piece in pieces:
+if len(piece.text) > self.max_chars:
+flush("paragraph_boundary")
+blocks.extend(self._split_long_span(source, piece.start, piece.end))
+continue
+candidate_len = piece.end - current[0].start if current else len(piece.text)
+if current and candidate_len > self.target_chars:
+flush("paragraph_boundary")
+current.append(piece)
+flush("scene_boundary" if scene.reason == "scene_separator" else "paragraph_boundar
+y")
+return blocks
+def _scene_spans(self, text: str) -> list[TextSpan]:
+separators = list(re.finditer(r"(?m)^\s*(?:[-*_=\u2014]{3,}|#{3,}|第[一二三四五六七八九十百千万\d]+幕)
+\s*$", text))
+if not separators:
+return self._finalize_span(text, 0, len(text), "chapter")
+spans: list[TextSpan] = []
+cursor = 0
+for match in separators:
+spans.extend(self._finalize_span(text, cursor, match.start(), "scene_separator"))
+cursor = match.end()
+spans.extend(self._finalize_span(text, cursor, len(text), "scene_separator"))
+return spans
+def _paragraph_spans(self, text: str, start: int, end: int) -> list[TextSpan]:
+segment = text[start:end]
+spans: list[TextSpan] = []
+for match in re.finditer(r"\S(?:.*?)(?=(?:\r?\n\s*\r?\n)|\Z)", segment, flags=re.DOTALL
+):
+span_start = start + match.start()
+span_end = start + match.end()
+spans.extend(self._finalize_span(text, span_start, span_end, "paragraph"))
+return spans
+— 26 —
+
+灵枢智能写作工作台软件 V3.0 第 27 页 / 共 60 页
+def _split_long_span(self, text: str, start: int, end: int) -> list[TextSpan]:
+spans: list[TextSpan] = []
+cursor = start
+while cursor < end:
+remaining = end - cursor
+if remaining <= self.max_chars:
+spans.extend(self._finalize_span(text, cursor, end, "sentence_boundary"))
+break
+cut = self._sentence_cut(text, cursor, min(end, cursor + self.max_chars))
+if cut <= cursor:
+cut = min(end, cursor + self.max_chars)
+reason = "hard_limit"
+else:
+reason = "sentence_boundary"
+spans.extend(self._finalize_span(text, cursor, cut, reason))
+cursor = cut
+return spans
+def _sentence_cut(self, text: str, start: int, hard_end: int) -> int:
+window = text[start:hard_end]
+cut = -1
+for mark in ("。", "！", "？", ".", "!", "?", "\n"):
+cut = max(cut, window.rfind(mark))
+if cut < self.min_sentence_cut_chars:
+return -1
+return start + cut + 1
+@staticmethod
+def _finalize_span(text: str, start: int, end: int, reason: str) -> list[TextSpan]:
+start = max(0, int(start))
+end = max(start, int(end))
+while start < end and text[start].isspace():
+start += 1
+while end > start and text[end - 1].isspace():
+end -= 1
+if start >= end:
+return []
+return [TextSpan(start=start, end=end, text=text[start:end], reason=reason)]
+@staticmethod
+def _int_or_none(value: Any) -> int | None:
+try:
+return int(value)
+except (TypeError, ValueError):
+return None
+def _apply_overlap_window(self, blocks: list[SemanticBlock]) -> list[SemanticBlock]:
+"""为每个 block 添加前一个 block 末尾的 overlap_sentences 个句子作为重叠上下文。
+重叠文本存储在 block.metadata["overlap_prefix"] 中，
+不修改 block 的 char_start/char_end/content_hash，以保持幂等性。
+"""
+result: list[SemanticBlock] = [blocks[0]]
+for i in range(1, len(blocks)):
+prev_text = str(blocks[i - 1].text or "")
+— 27 —
+
+灵枢智能写作工作台软件 V3.0 第 28 页 / 共 60 页
+overlap_text = self._extract_trailing_sentences(prev_text, self.overlap_sentences)
+if overlap_text:
+new_metadata = dict(blocks[i].metadata or {})
+new_metadata["overlap_prefix"] = overlap_text
+new_metadata["overlap_source_block_uid"] = blocks[i - 1].block_uid
+new_block = SemanticBlock(
+book_id=blocks[i].book_id,
+block_uid=blocks[i].block_uid,
+chunk_id=blocks[i].chunk_id,
+chunk_index=blocks[i].chunk_index,
+chapter_id=blocks[i].chapter_id,
+chapter_title=blocks[i].chapter_title,
+char_start=blocks[i].char_start,
+char_end=blocks[i].char_end,
+text=blocks[i].text,
+content_hash=blocks[i].content_hash,
+structure_hash=blocks[i].structure_hash,
+pipeline_version=blocks[i].pipeline_version,
+metadata=new_metadata,
+)
+result.append(new_block)
+else:
+result.append(blocks[i])
+return result
+@staticmethod
+def _extract_trailing_sentences(text: str, count: int) -> str:
+"""从文本末尾提取最后 count 个句子。"""
+if not text or count <= 0:
+return ""
+# 按中文/英文句号、感叹号、问号分句
+sentences = re.split(r"(?<=[。！？.!?])", text)
+sentences = [s.strip() for s in sentences if s.strip()]
+if not sentences:
+return ""
+trailing = sentences[-count:]
+return "".join(trailing)
+===== 文件: novel_app/analysis/memory_window.py =====
+from __future__ import annotations
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any
+DEFAULT_SHORT_TERM_CHAPTER_WINDOW = 3
+@dataclass(frozen=True)
+class MemoryWindow:
+latest_chapter_id: int
+short_term_chapter_ids: tuple[int, ...]
+def contains_chapter(self, chapter_id: int | None) -> bool:
+if chapter_id is None:
+return True
+— 28 —
+
+灵枢智能写作工作台软件 V3.0 第 29 页 / 共 60 页
+return int(chapter_id) in self.short_term_chapter_ids
+class MemoryWindowBuilder:
+def __init__(self, *, short_term_chapter_window: int = DEFAULT_SHORT_TERM_CHAPTER_WINDOW) -
+> None:
+self.short_term_chapter_window = max(1, int(short_term_chapter_window))
+def build(self, facts: Iterable[dict[str, Any]]) -> MemoryWindow:
+chapter_ids = sorted(
+{
+int(fact.get("chapter_id") or 0)
+for fact in facts
+if _int_or_none(fact.get("chapter_id")) is not None
+}
+)
+if not chapter_ids:
+return MemoryWindow(latest_chapter_id=0, short_term_chapter_ids=())
+latest = chapter_ids[-1]
+short_term = tuple(chapter_ids[-self.short_term_chapter_window :])
+return MemoryWindow(latest_chapter_id=latest, short_term_chapter_ids=short_term)
+def select_context_facts(
+self,
+facts: Iterable[dict[str, Any]],
+*,
+include_cache: bool = False,
+) -> list[dict[str, Any]]:
+window = self.build(facts)
+selected: list[dict[str, Any]] = []
+for fact in facts:
+memory_type = str(fact.get("memory_type") or "")
+if memory_type == "cache" and not include_cache:
+continue
+if window.contains_chapter(_int_or_none(fact.get("chapter_id"))):
+selected.append(dict(fact))
+continue
+if str(fact.get("memory_type") or "") == "foundation":
+selected.append(dict(fact))
+continue
+if str(fact.get("memory_importance") or "") == "high":
+selected.append(dict(fact))
+return selected
+def migrate_expired_short_term(
+self,
+facts: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+"""滑动窗口迁移：将超出短期窗口的 short_term 事实降级为 long_term。
+降级规则：
+1. chapter_id 不在当前短期窗口内 → memory_scope = long_term
+2. 降级时按重要性重新分类 memory_type
+3. 伏笔事实永不降级（is_foreshadowing = true）
+4. foundation 类型永不降级
+— 29 —
+
+灵枢智能写作工作台软件 V3.0 第 30 页 / 共 60 页
+"""
+source = [dict(f) for f in facts]
+if not source:
+return source
+window = self.build(source)
+migrated: list[dict[str, Any]] = []
+for fact in source:
+chapter_id = _int_or_none(fact.get("chapter_id"))
+memory_scope = str(fact.get("memory_scope") or "")
+fact_type = str(fact.get("fact_type") or "")
+is_foreshadowing = bool(fact.get("is_foreshadowing"))
+memory_type = str(fact.get("memory_type") or "")
+# 永不降级
+if is_foreshadowing or memory_type == "foundation" or fact_type in {"foreshadowing"
+, "world_rule"}:
+migrated.append(fact)
+continue
+# 需要降级
+if memory_scope == "short_term" and not window.contains_chapter(chapter_id):
+fact["memory_scope"] = "long_term"
+# 重新分类 memory_type
+memory_importance = str(fact.get("memory_importance") or "normal")
+if fact_type in {"event", "relation"} and memory_importance != "high":
+fact["memory_type"] = "cache"
+fact["metadata"] = dict(fact.get("metadata") or {})
+fact["metadata"]["migration"] = {
+"from_scope": "short_term",
+"to_scope": "long_term",
+"previous_memory_type": memory_type,
+===== （中间部分源代码已省略，共提交前 30 页 + 后 30 页，符合软件著作权登记要求） =====
+===== 文件: electron/preload.js =====
+contextBridge.exposeInMainWorld('lingshu', {
+apiBaseUrl: process.env.LINGSHU_API_BASE_URL || `${localBaseUrl}/api`,
+wsBaseUrl: process.env.LINGSHU_WS_BASE_URL || `${localBaseUrl.replace(/^http/, 'ws')}/ws`,
+cloudBaseUrl,
+cloudApiBaseUrl: `${cloudBaseUrl.replace(/\/+$/, '')}/api`,
+cloudWsBaseUrl,
+// 密钥安全存储 (对应 secure_storage.py DPAPI)
+protectSecret: (secret) => ipcRenderer.invoke('secure:protect', secret),
+unprotectSecret: (encrypted) => ipcRenderer.invoke('secure:unprotect', encrypted),
+// 文件系统
+openFileDialog: (options) => ipcRenderer.invoke('dialog:openFile', options),
+readFile: (filePath) => ipcRenderer.invoke('fs:readFile', filePath),
+writeFile: (filePath, content) => ipcRenderer.invoke('fs:writeFile', filePath, content),
+statFile: (filePath) => ipcRenderer.invoke('fs:stat', filePath),
+// 应用信息
+getPath: (name) => ipcRenderer.invoke('app:getPath', name),
+onOpenSearch: (callback) => {
+const handler = () => {
+if (typeof callback === 'function') callback();
+— 30 —
+
+灵枢智能写作工作台软件 V3.0 第 31 页 / 共 60 页
+};
+ipcRenderer.on('app:open-search', handler);
+return () => ipcRenderer.removeListener('app:open-search', handler);
+},
+platform: process.platform,
+isElectron: true,
+});
+===== 文件: electron/main.js =====
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const http = require('http');
+const { spawn } = require('child_process');
+const { writeMainLog, isPathAllowed, registerSafeStorageHandlers, registerFileIpcHandlers } = r
+equire('./shared/electron-common');
+// ============================================================
+// 灵枢 Electron 壳 — 对应 Qt 项目 packaging/Launcher.cs
+// ============================================================
+const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+const backendPort = process.env.LINGSHU_BACKEND_PORT || '8787';
+const backendHost = process.env.LINGSHU_BACKEND_HOST || '127.0.0.1';
+const localBackendBaseUrl = (process.env.LINGSHU_LOCAL_BASE_URL || `http://${backendHost}:${bac
+kendPort}`).replace(/\/+$/, '');
+const localHealthUrl = `${localBackendBaseUrl}/api/health`;
+const cloudHealthUrl = process.env.LINGSHU_CLOUD_HEALTH_URL || 'https://www.ling-shu.top/api/he
+alth';
+let mainWindow = null;
+let splashWindow = null;
+let backendProcess = null;
+let lastSplashStage = { stage: '正在启动灵枢', detail: '启动本地工作台服务' };
+if (process.env.LINGSHU_PORTABLE_DATA_DIR) {
+try {
+fs.mkdirSync(process.env.LINGSHU_PORTABLE_DATA_DIR, { recursive: true });
+app.setPath('userData', process.env.LINGSHU_PORTABLE_DATA_DIR);
+} catch (_err) {
+// Fall back to Electron's default userData path if the portable directory is unavailable.
+}
+}
+process.on('uncaughtException', (err) => {
+writeMainLog('ERROR', 'uncaughtException', err && err.stack ? err.stack : String(err));
+});
+process.on('unhandledRejection', (err) => {
+writeMainLog('ERROR', 'unhandledRejection', err && err.stack ? err.stack : String(err));
+});
+function splashImagePath() {
+const candidates = [
+path.join(process.resourcesPath, 'branding', 'startup.png'),
+path.join(__dirname, '..', 'branding', 'startup.png'),
+path.resolve(__dirname, '..', 'image_1777455545955.png'),
+— 31 —
+
+灵枢智能写作工作台软件 V3.0 第 32 页 / 共 60 页
+path.resolve(__dirname, '..', '..', 'image_1777455545955.png'),
+];
+return candidates.find((candidate) => fs.existsSync(candidate)) || '';
+}
+function createSplashWindow() {
+if (splashWindow && !splashWindow.isDestroyed()) return;
+splashWindow = new BrowserWindow({
+width: 640,
+height: 400,
+resizable: false,
+maximizable: false,
+minimizable: false,
+frame: false,
+center: true,
+show: false,
+backgroundColor: '#0b1220',
+webPreferences: {
+nodeIntegration: false,
+contextIsolation: true,
+sandbox: true,
+},
+});
+splashWindow.once('ready-to-show', () => {
+if (splashWindow && !splashWindow.isDestroyed()) splashWindow.show();
+});
+splashWindow.webContents.once('did-finish-load', () => {
+setSplashStage(lastSplashStage.stage, lastSplashStage.detail);
+});
+splashWindow.on('closed', () => {
+splashWindow = null;
+});
+splashWindow.loadFile(path.join(__dirname, 'splash.html'), {
+query: { image: splashImagePath() },
+}).catch((err) => writeMainLog('ERROR', 'splash load failed', String(err)));
+}
+function setSplashStage(stage, detail) {
+lastSplashStage = { stage, detail };
+writeMainLog('INFO', 'splash stage', `${stage} | ${detail}`);
+if (!splashWindow || splashWindow.isDestroyed()) return;
+const payload = JSON.stringify({ stage, detail });
+splashWindow.webContents.executeJavaScript(
+`window.setSplashStage && window.setSplashStage(${payload})`,
+).catch((err) => writeMainLog('ERROR', 'splash stage update failed', String(err)));
+}
+function closeSplashWindow() {
+if (!splashWindow || splashWindow.isDestroyed()) return;
+splashWindow.close();
+splashWindow = null;
+}
+function createWindow() {
+— 32 —
+
+灵枢智能写作工作台软件 V3.0 第 33 页 / 共 60 页
+writeMainLog('INFO', 'createWindow', `isDev=${isDev} dirname=${__dirname}`);
+mainWindow = new BrowserWindow({
+width: 1400,
+height: 900,
+minWidth: 1024,
+minHeight: 680,
+title: '灵枢',
+icon: path.join(__dirname, '..', 'packaging', 'app_icon.ico'),
+autoHideMenuBar: true,
+webPreferences: {
+preload: path.join(__dirname, 'preload.js'),
+nodeIntegration: false,
+contextIsolation: true,
+sandbox: true,
+},
+frame: true,
+backgroundColor: '#f5f7fa',
+show: false,
+});
+mainWindow.setMenuBarVisibility(false);
+// 加载 Vue SPA
+if (isDev) {
+mainWindow.loadURL('http://127.0.0.1:5175');
+mainWindow.webContents.openDevTools({ mode: 'detach' });
+} else {
+// Production: dist files are bundled inside app.asar at dist/
+const indexPath = path.join(__dirname, 'dist', 'index.html');
+writeMainLog('INFO', 'loadFile', indexPath);
+mainWindow.loadFile(indexPath);
+}
+mainWindow.webContents.on('did-fail-load', (_event, code, description, validatedUrl) => {
+writeMainLog('ERROR', 'renderer did-fail-load', `${code} ${description} ${validatedUrl}`);
+});
+mainWindow.webContents.on('before-input-event', (event, input) => {
+const key = String(input.key || '').toLowerCase();
+if ((input.control || input.meta) && !input.alt && key === 'f') {
+event.preventDefault();
+mainWindow.webContents.stopFindInPage('clearSelection');
+mainWindow.webContents.send('app:open-search');
+}
+});
+mainWindow.once('ready-to-show', () => {
+mainWindow.show();
+closeSplashWindow();
+});
+mainWindow.on('closed', () => {
+mainWindow = null;
+});
+}
+— 33 —
+
+灵枢智能写作工作台软件 V3.0 第 34 页 / 共 60 页
+// ============================================================
+// Python 后端进程管理
+// ============================================================
+const https = require('https');
+function requestBackendHealth(healthUrl = localHealthUrl, timeoutMs = 3000) {
+return new Promise((resolve) => {
+const client = healthUrl.startsWith('https:') ? https : http;
+const req = client.get(healthUrl, (res) => {
+res.resume();
+resolve(res.statusCode === 200);
+});
+req.setTimeout(timeoutMs, () => {
+req.destroy();
+resolve(false);
+});
+req.on('error', () => resolve(false));
+});
+}
+async function waitForBackend(healthUrl = localHealthUrl, attempts = 20, delayMs = 700) {
+for (let i = 0; i < attempts; i += 1) {
+if (i === 3) setSplashStage('正在启动本地工作台服务', '等待 FastAPI 就绪');
+// eslint-disable-next-line no-await-in-loop
+if (await requestBackendHealth(healthUrl)) return true;
+// eslint-disable-next-line no-await-in-loop
+await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+return false;
+}
+function backendRoot() {
+return isDev ? path.resolve(__dirname, '..') : path.join(process.resourcesPath, 'backend');
+}
+function resolvePythonCommand() {
+if (process.env.LINGSHU_PYTHON) {
+return { command: process.env.LINGSHU_PYTHON, args: [] };
+}
+if (!isDev) {
+const bundledPython = path.join(process.resourcesPath, 'python', process.platform === 'win3
+2' ? 'python.exe' : 'bin/python3');
+if (fs.existsSync(bundledPython)) {
+return { command: bundledPython, args: [] };
+}
+}
+if (process.platform === 'win32') {
+return { command: 'python', args: [] };
+}
+return { command: 'python3', args: [] };
+}
+— 34 —
+
+灵枢智能写作工作台软件 V3.0 第 35 页 / 共 60 页
+function backendEnvironment() {
+const dataDir = path.join(app.getPath('userData'), 'data');
+try {
+fs.mkdirSync(dataDir, { recursive: true });
+} catch (_err) {
+// The backend will surface a clearer error if the data directory is unusable.
+}
+return {
+...process.env,
+BOOKSTORE_DB_PATH: process.env.BOOKSTORE_DB_PATH || path.join(dataDir, 'bookstore_demo.db')
+,
+LINGSHU_BACKEND_HOST: backendHost,
+LINGSHU_BACKEND_PORT: backendPort,
+};
+}
+function launchBackendProcess() {
+if (backendProcess) return;
+const python = resolvePythonCommand();
+const args = [
+...python.args,
+'-m',
+'uvicorn',
+'lingshu_api.main:app',
+'--host',
+backendHost,
+'--port',
+backendPort,
+];
+const cwd = backendRoot();
+writeMainLog('INFO', 'starting local backend', `${python.command} ${args.join(' ')} cwd=${cwd
+}`);
+backendProcess = spawn(python.command, args, {
+cwd,
+env: backendEnvironment(),
+windowsHide: true,
+stdio: ['ignore', 'pipe', 'pipe'],
+});
+backendProcess.stdout.on('data', (chunk) => writeMainLog('INFO', 'backend stdout', chunk.toSt
+ring().trim()));
+backendProcess.stderr.on('data', (chunk) => writeMainLog('ERROR', 'backend stderr', chunk.toS
+tring().trim()));
+backendProcess.on('exit', (code, signal) => {
+writeMainLog('INFO', 'backend exited', `code=${code} signal=${signal || ''}`);
+backendProcess = null;
+});
+backendProcess.on('error', (err) => {
+writeMainLog('ERROR', 'backend spawn failed', err && err.stack ? err.stack : String(err));
+backendProcess = null;
+});
+}
+async function startBackend() {
+setSplashStage('正在启动本地工作台服务', '检查本地 FastAPI');
+if (await requestBackendHealth(localHealthUrl)) {
+— 35 —
+
+灵枢智能写作工作台软件 V3.0 第 36 页 / 共 60 页
+writeMainLog('INFO', 'Local backend reachable', localHealthUrl);
+setSplashStage('本地服务已就绪', '准备加载主界面');
+return true;
+}
+if (process.env.LINGSHU_DISABLE_LOCAL_BACKEND !== '1') {
+launchBackendProcess();
+} else {
+writeMainLog('INFO', 'local backend launch disabled by env', 'LINGSHU_DISABLE_LOCAL_BACKEND
+=1');
+}
+if (await waitForBackend(localHealthUrl)) {
+writeMainLog('INFO', 'Local backend started', localHealthUrl);
+setSplashStage('本地服务已启动', '准备加载主界面');
+return true;
+}
+const cloudReachable = await requestBackendHealth(cloudHealthUrl, 1500);
+writeMainLog('ERROR', 'Local backend unavailable', `${localHealthUrl}; cloudReachable=${cloud
+Reachable}`);
+return false;
+}
+function stopBackend() {
+if (!backendProcess) return;
+try {
+backendProcess.kill();
+} catch (err) {
+writeMainLog('ERROR', 'backend kill failed', String(err));
+}
+backendProcess = null;
+}
+// ============================================================
+// IPC 处理 — 本地文件访问 & 密钥安全存储
+// ============================================================
+// 密钥安全存储 (对应 Qt secure_storage.py 的 DPAPI)
+registerSafeStorageHandlers();
+// 文件选择对话框
+ipcMain.handle('dialog:openFile', async (_event, options) => {
+if (options !== undefined && (typeof options !== 'object' || options === null)) {
+throw new Error('Invalid argument: options must be an object if provided');
+}
+const result = await dialog.showOpenDialog(mainWindow, options || {
+properties: ['openFile'],
+filters: [
+{ name: '文档', extensions: ['txt', 'md', 'docx'] },
+{ name: '全部', extensions: ['*'] },
+],
+});
+return result;
+});
+— 36 —
+
+灵枢智能写作工作台软件 V3.0 第 37 页 / 共 60 页
+// 文件读写（异步）— 由共享模块注册
+registerFileIpcHandlers();
+// 获取应用数据路径
+ipcMain.handle('app:getPath', (_event, name) => {
+return app.getPath(name);
+});
+// ============================================================
+// 自动更新 (对应 packaging/BUILD_RULES.txt)
+//
+// 生产环境代码签名要求：
+// Windows: 需配置环境变量 WIN_CSC_LINK（证书路径）和 WIN_CSC_KEY_PASSWORD（证书密码）
+// macOS: 需配置环境变量 MAC_CSC_NAME（签名身份名称）
+// 更新源: https://update.ling-shu.top（需 HTTPS）
+// ============================================================
+function setupAutoUpdater() {
+// 仅在打包后的生产环境启用自动更新
+if (isDev) {
+writeMainLog('INFO', 'Auto-updater skipped in development mode');
+return;
+}
+try {
+const { autoUpdater } = require('electron-updater');
+// Windows 代码签名验证 — 拒绝未签名的更新包
+autoUpdater.verifyUpdateCodeSignature = true;
+autoUpdater.setFeedURL({
+provider: 'generic',
+url: 'https://update.ling-shu.top',
+});
+autoUpdater.on('update-available', (info) => {
+writeMainLog('INFO', 'update available', JSON.stringify(info));
+});
+autoUpdater.on('update-downloaded', (info) => {
+writeMainLog('INFO', 'update downloaded', JSON.stringify(info));
+});
+autoUpdater.on('error', (err) => {
+writeMainLog('ERROR', 'auto-updater error', err && err.stack ? err.stack : String(err));
+});
+autoUpdater.checkForUpdates().catch((err) => {
+writeMainLog('ERROR', 'checkForUpdates failed', err && err.stack ? err.stack : String(err
+));
+});
+writeMainLog('INFO', 'Auto-updater initialized with code signature verification enabled');
+} catch (err) {
+writeMainLog('WARN', 'Auto-updater not available', err && err.message ? err.message : Strin
+— 37 —
+
+灵枢智能写作工作台软件 V3.0 第 38 页 / 共 60 页
+g(err));
+}
+}
+// ============================================================
+// 应用生命周期
+// ============================================================
+app.whenReady().then(async () => {
+Menu.setApplicationMenu(null);
+writeMainLog('INFO', 'app ready', `isPackaged=${app.isPackaged} resourcesPath=${process.resou
+rcesPath}`);
+createSplashWindow();
+setSplashStage('正在启动灵枢', '启动本地工作台服务');
+const backendReady = await startBackend();
+if (!backendReady) {
+setSplashStage('本地服务启动失败', '请检查本地 Python/FastAPI 环境');
+dialog.showErrorBox(
+'无法启动本地工作台服务',
+`无法连接到本地灵枢服务：${localHealthUrl}\n\n请检查 Python/FastAPI 环境，或设置 LINGSHU_BACKEND_HOST / LINGSH
+U_BACKEND_PORT 指向已有本地服务。`,
+);
+} else {
+setSplashStage('正在加载主界面', '灵枢工作台即将打开');
+}
+createWindow();
+setupAutoUpdater();
+app.on('activate', () => {
+if (BrowserWindow.getAllWindows().length === 0) {
+createWindow();
+}
+});
+});
+app.on('window-all-closed', () => {
+stopBackend();
+if (process.platform !== 'darwin') {
+app.quit();
+}
+});
+app.on('before-quit', () => {
+stopBackend();
+});
+===== 文件: packaging/Launcher.cs =====
+using System;
+using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.IO;
+using System.IO.Compression;
+using System.Reflection;
+using System.Threading;
+using System.Windows.Forms;
+— 38 —
+
+灵枢智能写作工作台软件 V3.0 第 39 页 / 共 60 页
+namespace SimpleAINovelAppLauncher
+{
+internal static class Program
+{
+[STAThread]
+private static int Main()
+{
+LauncherSplash splash = null;
+try
+{
+Application.EnableVisualStyles();
+Application.SetCompatibleTextRenderingDefault(false);
+splash = new LauncherSplash(LauncherConfig.AppName);
+splash.Show();
+splash.SetStage("正在启动 " + LauncherConfig.AppName, "准备运行环境");
+Application.DoEvents();
+string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+;
+if (string.IsNullOrEmpty(exeDir))
+{
+exeDir = Environment.CurrentDirectory;
+}
+string runtimeBase = Path.Combine(
+Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+LauncherConfig.AppName
+);
+string dataDir = Path.Combine(exeDir, "data");
+string[] legacyDataDirs = new string[]
+{
+Path.Combine(
+Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+LauncherConfig.AppName, "data"
+),
+Path.Combine(
+Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+"SimpleAINovelApp", "data"
+)
+};
+string legacyDataEnv = string.Join(Path.PathSeparator.ToString(), legacyDataDir
+s);
+splash.SetStage("正在检查运行时", "首次启动可能需要解压文件");
+string installDir = EnsureInstallDir(Path.Combine(runtimeBase, "runtime"), Laun
+cherConfig.Version);
+Directory.CreateDirectory(dataDir);
+string stampPath = Path.Combine(installDir, ".extracted");
+string pythonw = Path.Combine(installDir, "python", "pythonw.exe");
+string mainScript = Path.Combine(installDir, "app", "main.py");
+string expectedStamp = BuildPayloadStamp();
+if (NeedsExtract(stampPath, expectedStamp, pythonw, mainScript))
+— 39 —
+
+灵枢智能写作工作台软件 V3.0 第 40 页 / 共 60 页
+{
+splash.SetStage("正在准备运行时", "解压内置组件，请稍候");
+DeleteDir(installDir);
+Directory.CreateDirectory(installDir);
+ExtractPayload(installDir, splash);
+File.WriteAllText(stampPath, expectedStamp);
+}
+if (Environment.GetEnvironmentVariable("SIMPLE_AI_NOVEL_LAUNCHER_EXTRACT_ONLY")
+== "1")
+{
+return 0;
+}
+if (!File.Exists(pythonw) || !File.Exists(mainScript))
+{
+throw new FileNotFoundException(
+"Runtime files could not be extracted.\n" +
+"pythonw.exe: " + File.Exists(pythonw) + "\n" +
+"main.py: " + File.Exists(mainScript) + "\n" +
+"Install dir: " + installDir
+);
+}
+ProcessStartInfo startInfo = new ProcessStartInfo();
+startInfo.FileName = pythonw;
+startInfo.Arguments = Quote(mainScript);
+startInfo.WorkingDirectory = Path.Combine(installDir, "app");
+startInfo.UseShellExecute = false;
+startInfo.EnvironmentVariables["SIMPLE_AI_NOVEL_DATA_DIR"] = dataDir;
+startInfo.EnvironmentVariables["SIMPLE_AI_NOVEL_LEGACY_DATA_DIRS"] = legacyData
+Env;
+startInfo.EnvironmentVariables["PYTHONHOME"] = Path.Combine(installDir, "python
+");
+startInfo.EnvironmentVariables["PYTHONPATH"] = "";
+startInfo.EnvironmentVariables["SIMPLE_AI_NOVEL_NATIVE_SPLASH"] = "1";
+splash.SetStage("正在加载主界面", "灵枢工作台正在后台启动");
+Process child = Process.Start(startInfo);
+WaitForChildWindow(child, splash);
+return 0;
+}
+catch (Exception exc)
+{
+try { Console.Error.WriteLine(exc.ToString()); } catch { }
+MessageBox.Show(
+exc.Message,
+LauncherConfig.AppName + " startup failed",
+MessageBoxButtons.OK,
+MessageBoxIcon.Error
+);
+return 1;
+}
+finally
+{
+if (splash != null)
+— 40 —
+
+灵枢智能写作工作台软件 V3.0 第 41 页 / 共 60 页
+{
+splash.CloseSplash();
+}
+}
+}
+private static void WaitForChildWindow(Process child, LauncherSplash splash)
+{
+if (child == null)
+{
+return;
+}
+Stopwatch stopwatch = Stopwatch.StartNew();
+while (!child.HasExited && stopwatch.Elapsed.TotalSeconds < 45)
+{
+splash.Pump();
+child.Refresh();
+if (child.MainWindowHandle != IntPtr.Zero)
+{
+splash.SetStage("启动完成", "正在打开工作台");
+DateTime until = DateTime.Now.AddMilliseconds(240);
+while (DateTime.Now < until)
+{
+splash.Pump();
+Thread.Sleep(15);
+}
+return;
+}
+Thread.Sleep(35);
+}
+}
+private static string EnsureInstallDir(string parentDir, string baseName)
+{
+Directory.CreateDirectory(parentDir);
+string dir = Path.Combine(parentDir, baseName);
+try
+{
+Directory.CreateDirectory(dir);
+if (Directory.Exists(dir))
+{
+return dir;
+}
+}
+catch { }
+dir = Path.Combine(parentDir, baseName + "_" + Guid.NewGuid().ToString("N").Substri
+ng(0, 8));
+Directory.CreateDirectory(dir);
+return dir;
+}
+private static string BuildPayloadStamp()
+{
+string exePath = Assembly.GetExecutingAssembly().Location;
+— 41 —
+
+灵枢智能写作工作台软件 V3.0 第 42 页 / 共 60 页
+FileInfo fileInfo = new FileInfo(exePath);
+return LauncherConfig.Version + "|" + fileInfo.Length + "|" + fileInfo.LastWriteTim
+eUtc.Ticks;
+}
+private static bool NeedsExtract(string stampPath, string expectedStamp, string pythonw
+, string mainScript)
+{
+if (!File.Exists(pythonw) || !File.Exists(mainScript))
+{
+return true;
+}
+try
+{
+return !File.Exists(stampPath) || File.ReadAllText(stampPath) != expectedStamp;
+}
+catch
+{
+return true;
+}
+}
+private static void DeleteDir(string path)
+{
+try
+{
+if (Directory.Exists(path))
+{
+Directory.Delete(path, true);
+}
+}
+catch
+{
+try
+{
+string backup = path + "_old_" + Guid.NewGuid().ToString("N").Substring(0,
+8);
+Directory.Move(path, backup);
+}
+catch { }
+}
+}
+private static void ExtractPayload(string installDir, LauncherSplash splash)
+{
+string tempZip = Path.Combine(
+Path.GetTempPath(),
+LauncherConfig.AppName + "-" + LauncherConfig.Version + "-" + Guid.NewGuid().To
+String("N") + ".zip"
+);
+try
+{
+using (Stream source = Assembly.GetExecutingAssembly().GetManifestResourceStrea
+m("payload.zip"))
+— 42 —
+
+灵枢智能写作工作台软件 V3.0 第 43 页 / 共 60 页
+{
+if (source == null)
+{
+throw new InvalidOperationException("Embedded payload.zip was not found
+.");
+}
+using (FileStream target = new FileStream(tempZip, FileMode.Create, FileAcc
+ess.Write))
+{
+PumpingCopy(source, target, splash);
+}
+}
+using (ZipArchive archive = ZipFile.OpenRead(tempZip))
+{
+foreach (ZipArchiveEntry entry in archive.Entries)
+{
+ExtractEntry(entry, installDir, splash);
+}
+}
+}
+finally
+{
+try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
+}
+}
+private static void ExtractEntry(ZipArchiveEntry entry, string installDir, LauncherSpla
+sh splash)
+{
+string relativePath = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
+if (string.IsNullOrWhiteSpace(relativePath)) return;
+string destination = Path.GetFullPath(Path.Combine(installDir, relativePath));
+string root = Path.GetFullPath(installDir + Path.DirectorySeparatorChar);
+if (!destination.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+{
+throw new InvalidOperationException("Blocked unsafe payload path: " + entry.Ful
+lName);
+}
+if (string.IsNullOrEmpty(entry.Name))
+{
+Directory.CreateDirectory(destination);
+return;
+}
+string parent = Path.GetDirectoryName(destination);
+if (!string.IsNullOrEmpty(parent))
+{
+Directory.CreateDirectory(parent);
+}
+using (Stream input = entry.Open())
+using (FileStream output = new FileStream(destination, FileMode.Create, FileAccess.
+— 43 —
+
+灵枢智能写作工作台软件 V3.0 第 44 页 / 共 60 页
+Write))
+{
+PumpingCopy(input, output, splash);
+}
+}
+private static void PumpingCopy(Stream input, Stream output, LauncherSplash splash)
+{
+byte[] buffer = new byte[1024 * 256];
+int read;
+long copied = 0;
+while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+{
+output.Write(buffer, 0, read);
+copied += read;
+if (copied >= 1024 * 1024)
+{
+copied = 0;
+if (splash != null)
+{
+splash.Pump();
+}
+}
+}
+}
+private static string Quote(string value)
+{
+return "\"" + value.Replace("\"", "\\\"") + "\"";
+}
+}
+internal sealed class LauncherSplash : Form
+{
+private readonly System.Windows.Forms.Timer timer;
+private readonly Stopwatch clock;
+private readonly Image splashImage;
+private string stage;
+private string detail;
+private int frame;
+public LauncherSplash(string appName)
+{
+Text = appName;
+stage = "正在启动 " + appName;
+detail = "请稍候";
+clock = Stopwatch.StartNew();
+splashImage = LoadSplashImage();
+DoubleBuffered = true;
+FormBorderStyle = FormBorderStyle.None;
+ShowInTaskbar = false;
+StartPosition = FormStartPosition.CenterScreen;
+TopMost = true;
+Width = 620;
+Height = 380;
+— 44 —
+
+灵枢智能写作工作台软件 V3.0 第 45 页 / 共 60 页
+BackColor = Color.FromArgb(246, 249, 255);
+using (GraphicsPath formShape = RoundedRect(new Rectangle(0, 0, Width, Height), 30)
+)
+{
+Region = new Region(formShape);
+}
+timer = new System.Windows.Forms.Timer();
+timer.Interval = 33;
+timer.Tick += delegate
+{
+frame = (frame + 1) % 360;
+Invalidate();
+};
+timer.Start();
+}
+public void SetStage(string nextStage, string nextDetail)
+{
+stage = string.IsNullOrWhiteSpace(nextStage) ? "正在启动" : nextStage;
+detail = string.IsNullOrWhiteSpace(nextDetail) ? "请稍候" : nextDetail;
+Invalidate();
+Pump();
+}
+public void Pump()
+{
+Application.DoEvents();
+}
+public void CloseSplash()
+{
+try
+{
+timer.Stop();
+if (splashImage != null) { splashImage.Dispose(); }
+Close();
+Dispose();
+}
+catch { }
+}
+protected override void OnPaint(PaintEventArgs e)
+{
+base.OnPaint(e);
+Graphics g = e.Graphics;
+g.SmoothingMode = SmoothingMode.AntiAlias;
+g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+if (clock != null)
+{
+PaintLightSplash(g);
+return;
+}
+Rectangle bounds = new Rectangle(10, 10, Width - 20, Height - 20);
+using (GraphicsPath shadowPath = RoundedRect(new Rectangle(bounds.X, bounds.Y + 8,
+— 45 —
+
+灵枢智能写作工作台软件 V3.0 第 46 页 / 共 60 页
+bounds.Width, bounds.Height), 24))
+using (SolidBrush shadow = new SolidBrush(Color.FromArgb(105, 6, 12, 24)))
+{
+g.FillPath(shadow, shadowPath);
+}
+using (GraphicsPath path = RoundedRect(bounds, 24))
+using (LinearGradientBrush bg = new LinearGradientBrush(bounds, Color.FromArgb(246,
+23, 35, 53), Color.FromArgb(250, 17, 28, 43), LinearGradientMode.ForwardDiagonal))
+{
+g.FillPath(bg, path);
+}
+float cx = 112;
+float cy = 120;
+float radius = 46;
+using (Pen ring = new Pen(Color.FromArgb(48, 155, 203, 255), 1.5f))
+{
+g.DrawEllipse(ring, cx - radius, cy - radius, radius * 2, radius * 2);
+g.DrawEllipse(ring, cx - radius * 0.74f, cy - radius * 0.74f, radius * 1.48f, r
+adius * 1.48f);
+g.DrawEllipse(ring, cx - radius * 0.46f, cy - radius * 0.46f, radius * 0.92f, r
+adius * 0.92f);
+}
+using (Pen arc = new Pen(Color.FromArgb(220, 120, 215, 255), 4f))
+{
+arc.StartCap = LineCap.Round;
+arc.EndCap = LineCap.Round;
+g.DrawArc(arc, cx - radius, cy - radius, radius * 2, radius * 2, frame * 4, 115
+);
+}
+double angle = frame * 4 * Math.PI / 180.0;
+float dotX = cx + (float)Math.Cos(angle) * radius;
+float dotY = cy + (float)Math.Sin(angle) * radius;
+using (SolidBrush dot = new SolidBrush(Color.FromArgb(235, 255, 218, 121)))
+{
+g.FillEllipse(dot, dotX - 5, dotY - 5, 10, 10);
+}
+using (Font titleFont = new Font("Microsoft YaHei UI", 28, FontStyle.Bold))
+using (SolidBrush titleBrush = new SolidBrush(Color.FromArgb(238, 246, 255)))
+{
+g.DrawString(LauncherConfig.AppName, titleFont, titleBrush, new RectangleF(178,
+72, 270, 48));
+}
+using (Font subtitleFont = new Font("Microsoft YaHei UI", 10, FontStyle.Regular))
+using (SolidBrush subtitleBrush = new SolidBrush(Color.FromArgb(172, 191, 210)))
+{
+g.DrawString("\u5c0f\u8bf4\u521b\u4f5c\u5de5\u4f5c\u53f0", subtitleFont, subtit
+leBrush, new RectangleF(180, 120, 290, 26));
+}
+using (Font stageFont = new Font("Microsoft YaHei UI", 12, FontStyle.Bold))
+using (SolidBrush stageBrush = new SolidBrush(Color.FromArgb(231, 239, 249)))
+{
+g.DrawString(stage, stageFont, stageBrush, new RectangleF(46, 204, 430, 30));
+}
+— 46 —
+
+灵枢智能写作工作台软件 V3.0 第 47 页 / 共 60 页
+using (Font detailFont = new Font("Microsoft YaHei UI", 9, FontStyle.Regular))
+using (SolidBrush detailBrush = new SolidBrush(Color.FromArgb(150, 170, 190)))
+{
+g.DrawString(detail, detailFont, detailBrush, new RectangleF(46, 232, 430, 24))
+;
+}
+RectangleF track = new RectangleF(46, 270, 428, 8);
+using (GraphicsPath trackPath = RoundedRect(Rectangle.Round(track), 4))
+using (SolidBrush trackBrush = new SolidBrush(Color.FromArgb(36, 255, 255, 255)))
+{
+g.FillPath(trackBrush, trackPath);
+}
+float barWidth = 110;
+float phase = (float)((clock.ElapsedMilliseconds % 1400) / 1400.0);
+float barX = track.Left + phase * (track.Width - barWidth);
+RectangleF barRect = new RectangleF(barX, track.Top, barWidth, track.Height);
+using (GraphicsPath barPath = RoundedRect(Rectangle.Round(barRect), 4))
+using (LinearGradientBrush bar = new LinearGradientBrush(barRect, Color.FromArgb(28
+, 100, 190, 255), Color.FromArgb(230, 136, 223, 255), LinearGradientMode.Horizontal))
+{
+g.FillPath(bar, barPath);
+}
+}
+private void PaintLightSplash(Graphics g)
+{
+if (clock != null)
+{
+PaintElegantLightSplash(g);
+return;
+}
+Rectangle bounds = new Rectangle(0, 0, Width, Height);
+using (LinearGradientBrush page = new LinearGradientBrush(bounds, Color.FromArgb(25
+0, 253, 255), Color.FromArgb(232, 242, 255), LinearGradientMode.ForwardDiagonal))
+{
+g.FillRectangle(page, bounds);
+}
+using (SolidBrush blueGlow = new SolidBrush(Color.FromArgb(58, 112, 194, 255)))
+using (SolidBrush warmGlow = new SolidBrush(Color.FromArgb(40, 255, 210, 116)))
+{
+g.FillEllipse(blueGlow, 360, -68, 260, 180);
+g.FillEllipse(warmGlow, -70, 210, 220, 150);
+}
+Rectangle shell = new Rectangle(20, 20, Width - 40, Height - 40);
+using (GraphicsPath shellPath = RoundedRect(shell, 24))
+using (SolidBrush shellBrush = new SolidBrush(Color.FromArgb(238, 255, 255, 255)))
+{
+g.FillPath(shellBrush, shellPath);
+}
+using (GraphicsPath shellPath = RoundedRect(shell, 24))
+using (Pen border = new Pen(Color.FromArgb(150, 215, 226, 242), 1f))
+{
+— 47 —
+
+灵枢智能写作工作台软件 V3.0 第 48 页 / 共 60 页
+g.DrawPath(border, shellPath);
+}
+RectangleF logoRect = new RectangleF(48, 62, 72, 72);
+using (LinearGradientBrush logoBrush = new LinearGradientBrush(Rectangle.Round(logo
+Rect), Color.FromArgb(94, 164, 255), Color.FromArgb(126, 226, 210), LinearGradientMode.ForwardD
+iagonal))
+{
+g.FillEllipse(logoBrush, logoRect);
+}
+using (Pen logoRing = new Pen(Color.FromArgb(180, 255, 255, 255), 2f))
+{
+g.DrawEllipse(logoRing, logoRect);
+}
+using (Font logoFont = new Font("Microsoft YaHei UI", 25, FontStyle.Bold))
+using (SolidBrush logoText = new SolidBrush(Color.White))
+using (StringFormat centered = new StringFormat { Alignment = StringAlignment.Cente
+r, LineAlignment = StringAlignment.Center })
+{
+g.DrawString("灵", logoFont, logoText, logoRect, centered);
+}
+using (Font titleFont = new Font("Microsoft YaHei UI", 25, FontStyle.Bold))
+using (SolidBrush titleBrush = new SolidBrush(Color.FromArgb(36, 55, 80)))
+{
+g.DrawString(LauncherConfig.AppName, titleFont, titleBrush, new RectangleF(136,
+68, 154, 42));
+}
+using (Font subtitleFont = new Font("Microsoft YaHei UI", 10, FontStyle.Regular))
+using (SolidBrush subtitleBrush = new SolidBrush(Color.FromArgb(103, 126, 154)))
+{
+g.DrawString("\u5c0f\u8bf4\u521b\u4f5c\u5de5\u4f5c\u53f0", subtitleFont, subtit
+leBrush, new RectangleF(138, 112, 180, 24));
+}
+Rectangle preview = new Rectangle(312, 58, 178, 128);
+using (GraphicsPath previewPath = RoundedRect(preview, 16))
+using (SolidBrush previewBrush = new SolidBrush(Color.FromArgb(245, 248, 252, 255))
+)
+{
+g.FillPath(previewBrush, previewPath);
+}
+using (GraphicsPath previewPath = RoundedRect(preview, 16))
+using (Pen previewBorder = new Pen(Color.FromArgb(170, 216, 229, 246), 1f))
+{
+g.DrawPath(previewBorder, previewPath);
+}
+using (SolidBrush sidebar = new SolidBrush(Color.FromArgb(230, 238, 248, 255)))
+{
+g.FillRectangle(sidebar, 326, 76, 34, 92);
+}
+using (SolidBrush accent = new SolidBrush(Color.FromArgb(112, 165, 255)))
+using (SolidBrush pale = new SolidBrush(Color.FromArgb(205, 224, 248)))
+using (Pen line = new Pen(Color.FromArgb(178, 199, 222), 3f))
+{
+— 48 —
+
+灵枢智能写作工作台软件 V3.0 第 49 页 / 共 60 页
+g.FillEllipse(accent, 335, 86, 12, 12);
+g.FillEllipse(pale, 335, 110, 12, 12);
+g.FillEllipse(pale, 335, 134, 12, 12);
+line.StartCap = LineCap.Round;
+line.EndCap = LineCap.Round;
+g.DrawLine(line, 378, 86, 462, 86);
+g.DrawLine(line, 378, 108, 446, 108);
+g.DrawLine(line, 378, 130, 468, 130);
+g.DrawLine(line, 378, 152, 430, 152);
+}
+float pulse = (float)(0.5 + 0.5 * Math.Sin(clock.ElapsedMilliseconds / 260.0));
+using (SolidBrush pulseBrush = new SolidBrush(Color.FromArgb((int)(90 + pulse * 70)
+, 97, 173, 255)))
+{
+g.FillEllipse(pulseBrush, 470, 70, 8, 8);
+}
+using (Font stageFont = new Font("Microsoft YaHei UI", 12, FontStyle.Bold))
+using (SolidBrush stageBrush = new SolidBrush(Color.FromArgb(55, 71, 93)))
+{
+g.DrawString(stage, stageFont, stageBrush, new RectangleF(48, 218, 420, 30));
+}
+using (Font detailFont = new Font("Microsoft YaHei UI", 9, FontStyle.Regular))
+using (SolidBrush detailBrush = new SolidBrush(Color.FromArgb(122, 143, 166)))
+{
+g.DrawString(detail, detailFont, detailBrush, new RectangleF(48, 246, 420, 24))
+;
+}
+RectangleF ringRect = new RectangleF(470, 222, 28, 28);
+using (Pen ringTrack = new Pen(Color.FromArgb(215, 225, 238), 3f))
+using (Pen ringArc = new Pen(Color.FromArgb(94, 164, 255), 3f))
+{
+ringArc.StartCap = LineCap.Round;
+ringArc.EndCap = LineCap.Round;
+g.DrawEllipse(ringTrack, ringRect);
+g.DrawArc(ringArc, ringRect, frame * 5, 110);
+}
+RectangleF track = new RectangleF(48, 288, 464, 7);
+using (GraphicsPath trackPath = RoundedRect(Rectangle.Round(track), 4))
+using (SolidBrush trackBrush = new SolidBrush(Color.FromArgb(226, 233, 243)))
+{
+g.FillPath(trackBrush, trackPath);
+}
+float barWidth = 146;
+float phase = (float)((clock.ElapsedMilliseconds % 1200) / 1200.0);
+float barX = track.Left + phase * (track.Width - barWidth);
+RectangleF barRect = new RectangleF(barX, track.Top, barWidth, track.Height);
+using (GraphicsPath barPath = RoundedRect(Rectangle.Round(barRect), 4))
+using (LinearGradientBrush bar = new LinearGradientBrush(barRect, Color.FromArgb(30
+, 120, 182, 255), Color.FromArgb(235, 92, 168, 255), LinearGradientMode.Horizontal))
+{
+bar.SetBlendTriangularShape(0.5f);
+— 49 —
+
+灵枢智能写作工作台软件 V3.0 第 50 页 / 共 60 页
+g.FillPath(bar, barPath);
+}
+}
+private void PaintElegantLightSplash(Graphics g)
+{
+if (splashImage != null)
+{
+PaintAnimeSplash(g);
+return;
+}
+Rectangle bounds = new Rectangle(0, 0, Width, Height);
+using (LinearGradientBrush page = new LinearGradientBrush(bounds, Color.FromArgb(24
+9, 245, 239), Color.FromArgb(31, 42, 61), LinearGradientMode.ForwardDiagonal))
+{
+page.InterpolationColors = new ColorBlend
+{
+Positions = new[] { 0f, 0.38f, 1f },
+Colors = new[]
+{
+Color.FromArgb(249, 245, 239),
+Color.FromArgb(230, 236, 242),
+Color.FromArgb(31, 42, 61)
+}
+};
+g.FillRectangle(page, bounds);
+}
+using (SolidBrush tealGlow = new SolidBrush(Color.FromArgb(42, 13, 194, 178)))
+using (SolidBrush warmGlow = new SolidBrush(Color.FromArgb(40, 255, 185, 126)))
+{
+g.FillEllipse(tealGlow, 116, 54, 476, 260);
+g.FillEllipse(warmGlow, -70, 24, 260, 210);
+}
+Rectangle shell = new Rectangle(22, 20, Width - 44, Height - 40);
+using (GraphicsPath shadowPath = RoundedRect(new Rectangle(shell.X, shell.Y + 8, sh
+ell.Width, shell.Height), 28))
+using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(68, 8, 14, 25)))
+{
+g.FillPath(shadowBrush, shadowPath);
+}
+using (GraphicsPath shellPath = RoundedRect(shell, 28))
+using (LinearGradientBrush shellBrush = new LinearGradientBrush(shell, Color.FromAr
+gb(255, 252, 246), Color.FromArgb(50, 63, 84), LinearGradientMode.ForwardDiagonal))
+{
+shellBrush.InterpolationColors = new ColorBlend
+{
+Positions = new[] { 0f, 0.54f, 1f },
+Colors = new[]
+{
+Color.FromArgb(236, 255, 252, 246),
+Color.FromArgb(225, 229, 236, 242),
+Color.FromArgb(230, 50, 63, 84)
+}
+— 50 —
+
+灵枢智能写作工作台软件 V3.0 第 51 页 / 共 60 页
+};
+g.FillPath(shellBrush, shellPath);
+}
+using (GraphicsPath shellPath = RoundedRect(shell, 28))
+using (Pen border = new Pen(Color.FromArgb(120, 255, 255, 255), 1f))
+{
+g.DrawPath(border, shellPath);
+}
+DrawStudioWindowLight(g);
+Rectangle logoRect = new Rectangle(61, 178, 74, 74);
+using (GraphicsPath logoPath = RoundedRect(logoRect, 22))
+using (LinearGradientBrush logoBrush = new LinearGradientBrush(logoRect, Color.From
+Argb(21, 216, 194), Color.FromArgb(29, 44, 65), LinearGradientMode.ForwardDiagonal))
+{
+logoBrush.InterpolationColors = new ColorBlend
+{
+Positions = new[] { 0f, 0.52f, 1f },
+Colors = new[]
+{
+Color.FromArgb(21, 216, 194),
+Color.FromArgb(13, 128, 133),
+Color.FromArgb(29, 44, 65)
+}
+};
+g.FillPath(logoBrush, logoPath);
+}
+RectangleF logoRingRect = new RectangleF(logoRect.Left + 8, logoRect.Top + 8, 58, 5
+8);
+using (Pen logoRing = new Pen(Color.FromArgb(70, 255, 255, 255), 2f))
+using (Pen logoArc = new Pen(Color.FromArgb(230, 255, 230, 186), 3f))
+{
+logoArc.StartCap = LineCap.Round;
+logoArc.EndCap = LineCap.Round;
+g.DrawArc(logoRing, logoRingRect, 35, 190);
+g.DrawArc(logoArc, logoRingRect, frame * 4, 84);
+}
+DrawTealFlame(g, 122, 188, 15, 175, frame / 12.0);
+using (Font logoFont = new Font("Microsoft YaHei UI", 25, FontStyle.Bold))
+using (SolidBrush logoText = new SolidBrush(Color.White))
+using (StringFormat centered = new StringFormat { Alignment = StringAlignment.Cente
+r, LineAlignment = StringAlignment.Center })
+{
+g.DrawString("\u7075", logoFont, logoText, logoRect, centered);
+}
+using (Font titleFont = new Font("Microsoft YaHei UI", 28, FontStyle.Bold))
+using (SolidBrush titleBrush = new SolidBrush(Color.FromArgb(33, 45, 63)))
+{
+g.DrawString(LauncherConfig.AppName, titleFont, titleBrush, new RectangleF(152,
+181, 180, 44));
+}
+using (Font subtitleFont = new Font("Microsoft YaHei UI", 10, FontStyle.Regular))
+using (SolidBrush subtitleBrush = new SolidBrush(Color.FromArgb(82, 94, 111)))
+— 51 —
+
+灵枢智能写作工作台软件 V3.0 第 52 页 / 共 60 页
+{
+g.DrawString("\u5c0f\u8bf4\u521b\u4f5c\u5de5\u4f5c\u53f0", subtitleFont, subtit
+leBrush, new RectangleF(154, 224, 210, 24));
+}
+DrawAccentDots(g, 154, 253);
+DrawSoftWorkspacePreview(g);
+float pulse = (float)(0.5 + 0.5 * Math.Sin(clock.ElapsedMilliseconds / 260.0));
+using (Font stageFont = new Font("Microsoft YaHei UI", 13, FontStyle.Bold))
+using (SolidBrush stageBrush = new SolidBrush(Color.FromArgb(32, 43, 59)))
+{
+g.DrawString(stage, stageFont, stageBrush, new RectangleF(54, 294, 430, 30));
+}
+using (Font detailFont = new Font("Microsoft YaHei UI", 9, FontStyle.Regular))
+using (SolidBrush detailBrush = new SolidBrush(Color.FromArgb(83, 96, 114)))
+{
+g.DrawString(detail, detailFont, detailBrush, new RectangleF(54, 322, 430, 24))
+;
+}
+RectangleF ringRect = new RectangleF(520, 296, 30, 30);
+using (Pen ringTrack = new Pen(Color.FromArgb(125, 159, 174, 191), 3f))
+using (Pen ringArc = new Pen(Color.FromArgb(6, 183, 169), 3f))
+{
+ringArc.StartCap = LineCap.Round;
+ringArc.EndCap = LineCap.Round;
+g.DrawEllipse(ringTrack, ringRect);
+g.DrawArc(ringArc, ringRect, frame * 4, 115);
+}
+using (SolidBrush pulseBrush = new SolidBrush(Color.FromArgb((int)(76 + pulse * 96)
+, 244, 159, 91)))
+{
+g.FillEllipse(pulseBrush, 544, 290, 8, 8);
+}
+RectangleF track = new RectangleF(54, 350, 512, 7);
+using (GraphicsPath trackPath = RoundedRect(Rectangle.Round(track), 4))
+using (SolidBrush trackBrush = new SolidBrush(Color.FromArgb(72, 44, 58, 76)))
+{
+g.FillPath(trackBrush, trackPath);
+}
+float barWidth = 170;
+float phase = (float)((clock.ElapsedMilliseconds % 1416) / 1416.0);
+float barX = track.Left + phase * (track.Width - barWidth);
+RectangleF barRect = new RectangleF(barX, track.Top, barWidth, track.Height);
+using (GraphicsPath barPath = RoundedRect(Rectangle.Round(barRect), 4))
+using (LinearGradientBrush bar = new LinearGradientBrush(barRect, Color.FromArgb(20
+, 13, 194, 178), Color.FromArgb(46, 244, 159, 91), LinearGradientMode.Horizontal))
+{
+bar.SetBlendTriangularShape(0.5f);
+g.FillPath(bar, barPath);
+}
+}
+— 52 —
+
+灵枢智能写作工作台软件 V3.0 第 53 页 / 共 60 页
+private static void DrawStudioWindowLight(Graphics g)
+{
+Rectangle window = new Rectangle(43, 42, 138, 118);
+using (GraphicsPath path = RoundedRect(window, 16))
+using (LinearGradientBrush pane = new LinearGradientBrush(window, Color.FromArgb(17
+0, 255, 250, 238), Color.FromArgb(60, 255, 206, 164), LinearGradientMode.ForwardDiagonal))
+{
+g.FillPath(pane, path);
+}
+using (Pen slat = new Pen(Color.FromArgb(78, 78, 84, 98), 5f))
+{
+slat.StartCap = LineCap.Round;
+slat.EndCap = LineCap.Round;
+for (int y = 55; y < 150; y += 14)
+{
+g.DrawLine(slat, 52, y, 172, y - 8);
+}
+}
+using (GraphicsPath ray = new GraphicsPath())
+using (LinearGradientBrush rayBrush = new LinearGradientBrush(new Rectangle(46, 74,
+266, 132), Color.FromArgb(84, 255, 229, 191), Color.FromArgb(0, 255, 229, 191), LinearGradient
+Mode.Horizontal))
+{
+ray.AddPolygon(new[]
+{
+new PointF(50, 74),
+new PointF(285, 120),
+new PointF(312, 205),
+new PointF(64, 130),
+});
+g.FillPath(rayBrush, ray);
+}
+}
+private static Image LoadSplashImage()
+{
+Assembly assembly = Assembly.GetExecutingAssembly();
+foreach (string name in assembly.GetManifestResourceNames())
+{
+if (!name.EndsWith("startup_anime.jpg", StringComparison.OrdinalIgnoreCase))
+{
+continue;
+}
+using (Stream stream = assembly.GetManifestResourceStream(name))
+{
+if (stream == null)
+{
+continue;
+}
+using (Bitmap bitmap = new Bitmap(stream))
+{
+return new Bitmap(bitmap);
+}
+}
+— 53 —
+
+灵枢智能写作工作台软件 V3.0 第 54 页 / 共 60 页
+}
+return null;
+}
+private static void DrawSplashImageCover(Graphics g, Image image, Rectangle target)
+{
+if (image == null || image.Width <= 0 || image.Height <= 0)
+{
+return;
+}
+float scale = Math.Max(target.Width / (float)image.Width, target.Height / (float)im
+age.Height);
+float drawWidth = image.Width * scale;
+float drawHeight = image.Height * scale;
+RectangleF destination = new RectangleF(
+target.Left + (target.Width - drawWidth) / 2f,
+target.Top + (target.Height - drawHeight) / 2f,
+drawWidth,
+drawHeight
+);
+g.DrawImage(image, destination);
+}
+private static void DrawAnimeVignette(Graphics g, Rectangle bounds)
+{
+using (GraphicsPath path = RoundedRect(bounds, 30))
+using (PathGradientBrush vignette = new PathGradientBrush(path))
+{
+vignette.CenterPoint = new PointF(bounds.Left + bounds.Width * 0.64f, bounds.To
+p + bounds.Height * 0.42f);
+vignette.CenterColor = Color.FromArgb(0, 7, 11, 18);
+vignette.SurroundColors = new[] { Color.FromArgb(112, 7, 11, 18) };
+g.FillPath(vignette, path);
+}
+}
+private void PaintAnimeSplash(Graphics g)
+{
+Rectangle bounds = new Rectangle(0, 0, Width, Height);
+using (GraphicsPath clip = RoundedRect(bounds, 30))
+using (Region oldClip = g.Clip)
+{
+g.SetClip(clip);
+DrawSplashImageCover(g, splashImage, bounds);
+using (SolidBrush wash = new SolidBrush(Color.FromArgb(64, 7, 11, 18)))
+{
+g.FillRectangle(wash, bounds);
+}
+DrawAnimeVignette(g, bounds);
+Rectangle textGlow = new Rectangle(18, 190, 332, 176);
+using (GraphicsPath glowPath = RoundedRect(textGlow, 28))
+using (PathGradientBrush glow = new PathGradientBrush(glowPath))
+{
+glow.CenterPoint = new PointF(textGlow.Left + 78, textGlow.Bottom - 68);
+— 54 —
+
+灵枢智能写作工作台软件 V3.0 第 55 页 / 共 60 页
+glow.CenterColor = Color.FromArgb(145, 7, 11, 18);
+glow.SurroundColors = new[] { Color.FromArgb(0, 7, 11, 18) };
+g.FillPath(glow, glowPath);
+}
+DrawAnimeBrand(g);
+DrawAnimeStatus(g);
+DrawAnimeSweep(g);
+g.SetClip(oldClip, CombineMode.Replace);
+}
+using (GraphicsPath shell = RoundedRect(bounds, 30))
+using (Pen border = new Pen(Color.FromArgb(115, 255, 255, 255), 1f))
+{
+g.DrawPath(border, shell);
+}
+}
+private void DrawAnimeBrand(Graphics g)
+{
+using (Font titleFont = new Font("Microsoft YaHei UI", 32, FontStyle.Bold))
+using (SolidBrush titleBrush = new SolidBrush(Color.FromArgb(255, 252, 246)))
+{
+g.DrawString(LauncherConfig.AppName, titleFont, titleBrush, new RectangleF(42,
+224, 230, 54));
+}
+using (Font subtitleFont = new Font("Microsoft YaHei UI", 10, FontStyle.Regular))
+using (SolidBrush subtitleBrush = new SolidBrush(Color.FromArgb(222, 220, 233, 232)
+))
+{
+g.DrawString("\u5c0f\u8bf4\u521b\u4f5c\u5de5\u4f5c\u53f0", subtitleFont, subtit
+leBrush, new RectangleF(45, 273, 240, 24));
+}
+float flameX = 137 + (float)Math.Sin(frame / 14.0) * 2f;
+DrawTealFlame(g, flameX, 227, 13, 210, frame / 10.0);
+}
+private void DrawAnimeStatus(Graphics g)
+{
+using (Font stageFont = new Font("Microsoft YaHei UI", 12, FontStyle.Bold))
+using (SolidBrush stageBrush = new SolidBrush(Color.FromArgb(235, 246, 250, 250)))
+{
+g.DrawString(stage, stageFont, stageBrush, new RectangleF(44, 304, 360, 27));
+}
+using (Font detailFont = new Font("Microsoft YaHei UI", 9, FontStyle.Regular))
+using (SolidBrush detailBrush = new SolidBrush(Color.FromArgb(210, 201, 218, 220)))
+{
+g.DrawString(detail, detailFont, detailBrush, new RectangleF(44, 329, 360, 22))
+;
+}
+float pulse = (float)(0.5 + 0.5 * Math.Sin(clock.ElapsedMilliseconds / 240.0));
+RectangleF ringRect = new RectangleF(534, 304, 30, 30);
+using (Pen ringTrack = new Pen(Color.FromArgb(90, 235, 238, 241), 3f))
+using (Pen ringArc = new Pen(Color.FromArgb(230, 21, 223, 201), 3f))
+{
+ringArc.StartCap = LineCap.Round;
+— 55 —
+
+灵枢智能写作工作台软件 V3.0 第 56 页 / 共 60 页
+ringArc.EndCap = LineCap.Round;
+g.DrawEllipse(ringTrack, ringRect);
+g.DrawArc(ringArc, ringRect, frame * 4, 120);
+}
+using (SolidBrush pulseBrush = new SolidBrush(Color.FromArgb((int)(90 + pulse * 110
+), 246, 147, 79)))
+{
+g.FillEllipse(pulseBrush, 559, 299, 8, 8);
+}
+RectangleF track = new RectangleF(42, 357, 536, 7);
+using (GraphicsPath trackPath = RoundedRect(Rectangle.Round(track), 4))
+using (SolidBrush trackBrush = new SolidBrush(Color.FromArgb(72, 244, 248, 250)))
+{
+g.FillPath(trackBrush, trackPath);
+}
+float barWidth = 176;
+float phase = (float)((clock.ElapsedMilliseconds % 1488) / 1488.0);
+float barX = track.Left + phase * (track.Width - barWidth);
+RectangleF barRect = new RectangleF(barX, track.Top, barWidth, track.Height);
+using (GraphicsPath barPath = RoundedRect(Rectangle.Round(barRect), 4))
+using (LinearGradientBrush bar = new LinearGradientBrush(barRect, Color.FromArgb(22
+, 21, 223, 201), Color.FromArgb(58, 246, 147, 79), LinearGradientMode.Horizontal))
+{
+bar.SetBlendTriangularShape(0.5f);
+g.FillPath(bar, barPath);
+}
+}
+private void DrawAnimeSweep(Graphics g)
+{
+float sweepX = -140 + (float)((clock.ElapsedMilliseconds % 2160) / 2160.0) * (Width
++ 280);
+RectangleF sweepRect = new RectangleF(sweepX - 60, 0, 120, Height);
+using (LinearGradientBrush sweep = new LinearGradientBrush(sweepRect, Color.FromArg
+b(0, 255, 255, 255), Color.FromArgb(34, 255, 255, 255), LinearGradientMode.Horizontal))
+{
+sweep.SetBlendTriangularShape(0.5f);
+g.FillRectangle(sweep, sweepRect);
+}
+}
+private static void DrawAccentDots(Graphics g, float left, float top)
+{
+using (SolidBrush teal = new SolidBrush(Color.FromArgb(160, 9, 161, 151)))
+using (SolidBrush warm = new SolidBrush(Color.FromArgb(150, 229, 137, 71)))
+using (SolidBrush slate = new SolidBrush(Color.FromArgb(135, 55, 70, 96)))
+{
+g.FillEllipse(teal, left, top, 10, 10);
+g.FillEllipse(warm, left + 18, top + 1, 8, 8);
+g.FillEllipse(slate, left + 34, top, 10, 10);
+}
+}
+private void DrawSoftWorkspacePreview(Graphics g)
+— 56 —
+
+灵枢智能写作工作台软件 V3.0 第 57 页 / 共 60 页
+{
+Rectangle preview = new Rectangle(346, 54, 222, 178);
+using (GraphicsPath shadowPath = RoundedRect(new Rectangle(preview.X, preview.Y + 7
+, preview.Width, preview.Height), 22))
+using (SolidBrush shadow = new SolidBrush(Color.FromArgb(54, 8, 14, 25)))
+{
+g.FillPath(shadow, shadowPath);
+}
+using (GraphicsPath previewPath = RoundedRect(preview, 20))
+using (LinearGradientBrush room = new LinearGradientBrush(preview, Color.FromArgb(2
+42, 231, 216), Color.FromArgb(27, 36, 54), LinearGradientMode.ForwardDiagonal))
+{
+room.InterpolationColors = new ColorBlend
+{
+Positions = new[] { 0f, 0.42f, 1f },
+Colors = new[]
+{
+Color.FromArgb(246, 242, 231, 216),
+Color.FromArgb(238, 107, 118, 139),
+Color.FromArgb(246, 27, 36, 54)
+}
+};
+g.FillPath(room, previewPath);
+}
+using (GraphicsPath previewPath = RoundedRect(preview, 20))
+using (Pen previewBorder = new Pen(Color.FromArgb(90, 255, 255, 255), 1f))
+{
+g.DrawPath(previewBorder, previewPath);
+}
+DrawPreviewBlinds(g, preview);
+DrawPreviewArtist(g, preview);
+DrawPreviewDesk(g, preview);
+float sweepX = preview.Left - 70 + (float)((clock.ElapsedMilliseconds % 1500) / 150
+0.0) * (preview.Width + 140);
+RectangleF sweepRect = new RectangleF(sweepX - 44, preview.Top, 88, preview.Height)
+;
+using (GraphicsPath clip = RoundedRect(preview, 20))
+using (LinearGradientBrush sweep = new LinearGradientBrush(sweepRect, Color.FromArg
+b(0, 255, 255, 255), Color.FromArgb(62, 255, 255, 255), LinearGradientMode.Horizontal))
+using (Region oldClip = g.Clip)
+{
+sweep.SetBlendTriangularShape(0.5f);
+g.SetClip(clip);
+g.FillRectangle(sweep, sweepRect);
+g.SetClip(oldClip, CombineMode.Replace);
+}
+}
+private static void DrawPreviewBlinds(Graphics g, Rectangle preview)
+{
+using (GraphicsPath pane = RoundedRect(new Rectangle(preview.Left + 14, preview.Top
++ 14, 82, 72), 12))
+using (SolidBrush light = new SolidBrush(Color.FromArgb(112, 255, 241, 218)))
+— 57 —
+
+灵枢智能写作工作台软件 V3.0 第 58 页 / 共 60 页
+{
+g.FillPath(light, pane);
+}
+using (Pen slat = new Pen(Color.FromArgb(86, 54, 57, 72), 4f))
+{
+slat.StartCap = LineCap.Round;
+slat.EndCap = LineCap.Round;
+for (int index = 0; index < 6; index++)
+{
+float y = preview.Top + 26 + index * 10;
+g.DrawLine(slat, preview.Left + 22, y, preview.Left + 90, y - 6);
+}
+}
+}
+private void DrawPreviewArtist(Graphics g, Rectangle preview)
+{
+float pulse = (float)(0.5 + 0.5 * Math.Sin(clock.ElapsedMilliseconds / 300.0));
+float cx = preview.Left + 142;
+float cy = preview.Top + 88;
+using (GraphicsPath hair = new GraphicsPath())
+using (SolidBrush hairBrush = new SolidBrush(Color.FromArgb(210, 20, 32, 47)))
+{
+hair.StartFigure();
+hair.AddBezier(cx - 46, cy + 58, cx - 68, cy - 28, cx - 8, cy - 62, cx + 28, cy
+- 45);
+hair.AddBezier(cx + 28, cy - 45, cx + 76, cy - 22, cx + 72, cy + 66, cx + 4, cy
++ 74);
+hair.AddBezier(cx + 4, cy + 74, cx - 24, cy + 78, cx - 30, cy + 66, cx - 46, cy
++ 58);
+hair.CloseFigure();
+g.FillPath(hairBrush, hair);
+}
+using (Pen hairGlow = new Pen(Color.FromArgb((int)(120 + pulse * 65), 25, 211, 191)
+, 3f))
+{
+hairGlow.StartCap = LineCap.Round;
+hairGlow.EndCap = LineCap.Round;
+g.DrawLine(hairGlow, cx - 34, cy + 45, cx - 8, cy + 78);
+g.DrawLine(hairGlow, cx + 23, cy - 30, cx + 52, cy + 40);
+}
+using (SolidBrush skin = new SolidBrush(Color.FromArgb(245, 249, 220, 207)))
+using (SolidBrush shirt = new SolidBrush(Color.FromArgb(248, 246, 246, 244)))
+{
+g.FillEllipse(skin, cx - 21, cy - 35, 42, 48);
+using (GraphicsPath shirtPath = RoundedRect(Rectangle.Round(new RectangleF(cx -
+34, cy + 9, 70, 54)), 18))
+{
+g.FillPath(shirt, shirtPath);
+}
+}
+using (GraphicsPath leftHorn = new GraphicsPath())
+using (GraphicsPath rightHorn = new GraphicsPath())
+using (Pen hornDark = new Pen(Color.FromArgb(230, 7, 121, 126), 3f))
+— 58 —
+
+灵枢智能写作工作台软件 V3.0 第 59 页 / 共 60 页
+using (Pen hornCore = new Pen(Color.FromArgb(230, 17, 221, 198), 2f))
+{
+hornDark.StartCap = LineCap.Round;
+hornDark.EndCap = LineCap.Round;
+hornCore.StartCap = LineCap.Round;
+hornCore.EndCap = LineCap.Round;
+leftHorn.AddBezier(cx - 12, cy - 37, cx - 42, cy - 68, cx - 52, cy - 20, cx - 7
+2, cy - 25);
+rightHorn.AddBezier(cx + 8, cy - 39, cx + 32, cy - 78, cx + 37, cy - 22, cx + 5
+5, cy - 31);
+g.DrawPath(hornDark, leftHorn);
+g.DrawPath(hornDark, rightHorn);
+g.DrawPath(hornCore, leftHorn);
+g.DrawPath(hornCore, rightHorn);
+}
+using (Pen eye = new Pen(Color.FromArgb(230, 230, 127, 56), 3f))
+using (Pen glasses = new Pen(Color.FromArgb(190, 34, 45, 64), 1f))
+{
+eye.StartCap = LineCap.Round;
+eye.EndCap = LineCap.Round;
+g.DrawLine(eye, cx - 11, cy - 11, cx - 4, cy - 10);
+g.DrawLine(eye, cx + 7, cy - 11, cx + 14, cy - 10);
+g.DrawEllipse(glasses, cx - 18, cy - 21, 16, 16);
+g.DrawEllipse(glasses, cx + 2, cy - 21, 16, 16);
+g.DrawLine(glasses, cx - 2, cy - 13, cx + 2, cy - 13);
+}
+}
+private void DrawPreviewDesk(Graphics g, Rectangle preview)
+{
+RectangleF desk = new RectangleF(preview.Left + 16, preview.Top + 120, 190, 46);
+using (GraphicsPath deskPath = RoundedRect(Rectangle.Round(desk), 14))
+using (LinearGradientBrush deskBrush = new LinearGradientBrush(desk, Color.FromArgb
+(205, 181, 125, 88), Color.FromArgb(218, 82, 63, 67), LinearGradientMode.ForwardDiagonal))
+{
+g.FillPath(deskBrush, deskPath);
+}
+RectangleF tablet = new RectangleF(preview.Left + 86, preview.Top + 126, 82, 34);
+using (GraphicsPath tabletPath = RoundedRect(Rectangle.Round(tablet), 7))
+using (SolidBrush tabletBrush = new SolidBrush(Color.FromArgb(230, 37, 46, 61)))
+{
+g.FillPath(tabletBrush, tabletPath);
+}
+using (GraphicsPath screenPath = RoundedRect(Rectangle.Round(new RectangleF(tablet.
+Left + 8, tablet.Top + 6, tablet.Width - 16, tablet.Height - 13)), 4))
+using (SolidBrush screenBrush = new SolidBrush(Color.FromArgb(150, 86, 104, 124)))
+{
+g.FillPath(screenBrush, screenPath);
+}
+using (Pen stylus = new Pen(Color.FromArgb(220, 25, 31, 43), 3f))
+{
+stylus.StartCap = LineCap.Round;
+stylus.EndCap = LineCap.Round;
+g.DrawLine(stylus, tablet.Left - 8, tablet.Top + 4, tablet.Left + 8, tablet.Bot
+tom + 4);
+— 59 —
+
+灵枢智能写作工作台软件 V3.0 第 60 页 / 共 60 页
+}
+using (SolidBrush cup = new SolidBrush(Color.FromArgb(235, 255, 250, 239)))
+using (SolidBrush coffee = new SolidBrush(Color.FromArgb(210, 92, 65, 54)))
+{
+g.FillEllipse(cup, preview.Left + 35, preview.Top + 132, 30, 18);
+g.FillEllipse(coffee, preview.Left + 41, preview.Top + 136, 18, 8);
+}
+DrawTealFlame(g, preview.Left + 184, preview.Top + 128, 18, 210, frame / 9.0);
+}
+private static void DrawTealFlame(Graphics g, float cx, float cy, float size, int alpha
+, double phase)
+{
+float wiggle = (float)Math.Sin(phase) * size * 0.12f;
+using (GraphicsPath flame = new GraphicsPath())
+using (SolidBrush outer = new SolidBrush(Color.FromArgb(alpha, 8, 205, 187)))
+using (SolidBrush inner = new SolidBrush(Color.FromArgb(Math.Min(255, alpha + 20),
+112, 255, 229)))
+{
+flame.StartFigure();
+flame.AddBezier(cx, cy - size - wiggle, cx + size * 0.84f, cy - size * 0.42f, c
+x + size * 0.25f, cy + size * 0.22f, cx + size * 0.62f, cy + size * 0.78f);
+flame.AddBezier(cx + size * 0.62f, cy + size * 0.78f, cx + size * 0.1f, cy + si
+ze * 0.44f, cx - size * 0.1f, cy + size * 1.02f, cx - size * 0.72f, cy + size * 0.46f);
+flame.AddBezier(cx - size * 0.72f, cy + size * 0.46f, cx - size * 0.36f, cy + s
+ize * 0.22f, cx - size * 0.78f, cy - size * 0.42f, cx, cy - size - wiggle);
+flame.CloseFigure();
+g.FillPath(outer, flame);
+g.FillEllipse(inner, cx - size * 0.16f, cy - size * 0.24f, size * 0.32f, size *
+0.48f);
+}
+}
+private static GraphicsPath RoundedRect(Rectangle rect, int radius)
+{
+GraphicsPath path = new GraphicsPath();
+int diameter = radius * 2;
+Rectangle arc = new Rectangle(rect.Location, new Size(diameter, diameter));
+path.AddArc(arc, 180, 90);
+arc.X = rect.Right - diameter;
+path.AddArc(arc, 270, 90);
+arc.Y = rect.Bottom - diameter;
+path.AddArc(arc, 0, 90);
+arc.X = rect.Left;
+path.AddArc(arc, 90, 90);
+path.CloseFigure();
+return path;
+}
+}
+}
+（程序结束）
+— 60 —

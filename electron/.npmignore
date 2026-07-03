@@ -1,0 +1,3 @@
+# Override root .gitignore's dist/ exclusion
+!dist/
+!dist/**/*

@@ -1,0 +1,29 @@
+{
+  "name": "lingshu-monorepo",
+  "private": true,
+  "version": "2.0.0",
+  "description": "灵枢 — 智能写作工作台 (Vue3 全栈)",
+  "scripts": {
+    "dev": "concurrently -n ws,web,admin -c cyan,green,yellow \"npm run dev:ws\" \"npm run dev:web\" \"npm run dev:admin\"",
+    "dev:ws": "npm run dev --prefix lingshu-app",
+    "dev:web": "npm run dev --prefix web",
+    "dev:admin": "npm run dev --prefix admin-web",
+    "build": "npm run build:ws && npm run build:web && npm run build:admin",
+    "build:ws": "npm run build --prefix lingshu-app",
+    "build:web": "npm run build --prefix web",
+    "build:admin": "npm run build --prefix admin-web",
+    "backend": "python -m uvicorn lingshu_api.main:app --host 127.0.0.1 --port 8787",
+    "electron": "cd electron && npx electron .",
+    "test": "python tests/test_runner.py",
+    "test:quick": "python -c \"from lingshu_api.main import app; print(f'OK: {sum(1 for r in app.routes if hasattr(r,\\\"methods\\\"))} routes')\"",
+    "lint": "npm run lint:frontend && npm run lint:python",
+    "lint:frontend": "npm run lint --prefix lingshu-app",
+    "lint:python": "python -m ruff check lingshu_api novel_app tests",
+    "test:e2e": "playwright test",
+    "test:e2e:list": "playwright test --list"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0",
+    "concurrently": "^8.0.0"
+  }
+}
