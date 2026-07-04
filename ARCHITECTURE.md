@@ -1,11 +1,11 @@
-<div align="center">
+﻿<div align="center">
 
 # 灵枢（LingShu）系统架构说明书
 
 ## ——百万字级长篇小说智能写作工作台
 
 **文档编号**：LS-ARCH-2026-001
-**保密等级**：🔴 企业内部绝密（CONFIDENTIAL — INTERNAL USE ONLY）
+**保密等级**：TSOFTP所有
 **版本**：v2.0
 **编制日期**：2026-07-03
 **适用范围**：灵枢项目全栈（后端 / 前端 / 桌面端 / 数据库 / 部署）
@@ -14,11 +14,11 @@
 
 ---
 
-> ⚠️ **保密声明**
+> ⚠️ **所有权声明**
 >
-> 本文档包含灵枢项目的完整架构、数据库设计、安全机制、API 契约与部署细节，属于企业内部绝密资料。未经书面授权，禁止将本文档内容以任何形式披露给第三方、上传至公共网络或带出公司受控环境。违反者将依据《企业保密协议》追究法律责任。
+> 本文档及灵枢项目的完整架构、数据库设计、安全机制、API 契约与部署细节，均为 TSOFTP所有，保留一切权利。
 >
-> 🔒 **Need-to-Know 原则**：本文档按角色分发，阅读前请确认您的职责范围与本章节相关。
+> 本文档按角色分发，阅读前请确认您的职责范围与本章节相关。
 
 ---
 
@@ -85,6 +85,7 @@
 ### 2.3 业务上下文
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph TB
     subgraph Creator["创作端"]
         Author[作者]
@@ -195,6 +196,7 @@ graph TB
 ### 4.1 顶层架构图
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph TB
     subgraph Client["客户端层"]
         direction LR
@@ -351,6 +353,7 @@ f:\项目\灵枢\
 ### 5.1 应用分层
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph LR
     subgraph L1["L1 接入层"]
         FastAPI[FastAPI App]
@@ -424,6 +427,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
 ### 5.3 中间件栈（自上而下执行）
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph TB
     Req[HTTP 请求] --> M1["CORSMiddleware<br/>allow_credentials=True<br/>5173-5176 + ling-shu.top"]
     M1 --> M2["安全响应头中间件<br/>X-Frame-Options: DENY<br/>CSP（非 /api/ 路径）"]
@@ -461,7 +465,7 @@ graph TB
 | `RequestValidationError` | 422 | `{"detail": "请求参数验证失败", "errors": [...]}` |
 | `Exception`（兜底） | 500 | `{"detail": "服务器内部错误，请稍后重试"}`（堆栈仅记录日志） |
 
-> 🔒 **安全约束**：500 错误响应绝不暴露原始异常详情，仅记录服务端日志（来自 project_memory 硬约束）。
+> **安全约束**：500 错误响应绝不暴露原始异常详情，仅记录服务端日志（来自 project_memory 硬约束）。
 
 ### 5.5 路由模块清单
 
@@ -526,6 +530,7 @@ graph TB
 ### 6.1 多应用矩阵
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph TB
     subgraph Reader["读者端"]
         Web["web/<br/>灵爻 AI 共创阅读平台<br/>端口 5173<br/>读者登录/书库/书架/阅读器"]
@@ -561,6 +566,7 @@ graph TB
 ### 6.2 lingshu-app 写作台组件树
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph TB
     App["App.vue<br/>router-view + LoginDialog"]
 
@@ -667,6 +673,7 @@ graph TB
 ### 6.5 桌面端架构
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph TB
     subgraph Electron["Electron 主进程"]
         Main[main.js]
@@ -729,6 +736,7 @@ graph TB
 ### 7.1 混合数据库分层
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph LR
     subgraph SQLiteLayer["SQLite 主存储（WAL）"]
         Novels[("novels.db<br/>桌面工作台<br/>50+ 表")]
@@ -767,6 +775,7 @@ graph LR
 ### 7.2 Database 类组合
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph BT
     DB["Database 类<br/>novel_app/database.py"]
 
@@ -809,6 +818,7 @@ graph BT
 ### 7.3 核心表 ER 图（精简）
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 erDiagram
     books ||--o{ volumes : "1对多"
     books ||--o{ chapters : "1对多"
@@ -1011,6 +1021,7 @@ erDiagram
 ### 7.5 数据库迁移机制
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 sequenceDiagram
     participant App as 应用启动
     participant DB as Database.__init__
@@ -1114,6 +1125,7 @@ sequenceDiagram
 ### 8.1 V3 流水线总览
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph LR
     Start([输入：书籍文本]) --> M0[M0 init<br/>初始化运行]
 
@@ -1161,6 +1173,7 @@ graph LR
 ### 8.2 AIMD 动态并发控制器
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph TB
     Start(["初始 workers=5<br/>ssthresh=max/8 且不超过32"])
 
@@ -1201,6 +1214,7 @@ graph TB
 ### 8.3 写回层与证据门禁
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph TB
     Start([分析卡片]) --> Gate{证据门禁}
 
@@ -1245,13 +1259,14 @@ graph TB
 - `missing`：缺失证据，丢弃
 - `empty`：空证据，丢弃
 
-> 🔒 **硬约束**：分析草稿不能直接写入官方数据库，必须经过证据门禁（trusted/weak/missing/empty 四级评估）。
+> **硬约束**：分析草稿不能直接写入官方数据库，必须经过证据门禁（trusted/weak/missing/empty 四级评估）。
 
 ### 8.4 记忆压缩并行化
 
 **`MemoryCompressor.compress_parallel()`**（[memory_compressor.py](file:///f:/项目/灵枢/novel_app/analysis/memory_compressor.py)）：
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 sequenceDiagram
     participant Pipeline as 流水线主线程
     participant BG as 后台守护线程
@@ -1309,6 +1324,7 @@ sequenceDiagram
 ### 8.7 审计引擎 12 维度
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph LR
     Root((12 维度审计))
 
@@ -1378,6 +1394,7 @@ graph LR
 ### 9.1 双轨认证体系
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph TB
     subgraph UserAuth["普通用户认证"]
         Login["POST /api/auth/login"]
@@ -1411,6 +1428,7 @@ graph TB
 ### 9.2 三层密码哈希
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph LR
     Pwd[用户密码明文] --> Client["客户端预哈希<br/>PBKDF2-HMAC-SHA256<br/>100,000 迭代<br/>pepper + salt"]
     Client --> Server["服务端哈希<br/>bcrypt rounds=12"]
@@ -1570,6 +1588,7 @@ graph LR
 ### 11.1 部署模式
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph TB
     subgraph DeskMode["桌面端模式 Electron 打包"]
         direction LR
@@ -1638,6 +1657,7 @@ volumes:
 ### 11.3 打包流程
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 graph TB
     Start(["build_electron.ps1"]) --> Step1["1. 构建 Vue 前端<br/>npm run build<br/>lingshu-app/dist 到 electron/dist"]
     Step1 --> Step2["2. 安装 Electron 依赖<br/>检查 electron.exe<br/>缺失则 npm install"]
@@ -1666,6 +1686,7 @@ graph TB
 ### 12.1 用户注册与范例小说分发
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 sequenceDiagram
     actor User as 用户
     participant API as /api/auth/register
@@ -1712,6 +1733,7 @@ sequenceDiagram
 ### 12.2 V3 分析全流程
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 sequenceDiagram
     actor User as 作者
     participant WS as /ws/analysis-v3
@@ -1785,6 +1807,7 @@ sequenceDiagram
 ### 12.3 写回流程（V1 + V3 统一）
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 sequenceDiagram
     actor User as 作者
     participant API as /analysis-v3/runs/{run_id}/writeback
@@ -1831,6 +1854,7 @@ sequenceDiagram
 ### 12.4 本地↔云端同步
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 sequenceDiagram
     actor User as 作者
     participant API as /api/cloud/sync
@@ -1864,6 +1888,7 @@ sequenceDiagram
 ### 12.5 AI 对话（WebSocket）
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': false }}}%%
 sequenceDiagram
     actor User as 用户
     participant Vue as lingshu-app
@@ -1965,7 +1990,7 @@ sequenceDiagram
 
 ### 14.1 已知约束（来自项目硬约束）
 
-> 🔒 以下约束来自 `project_memory.md`，违反将导致数据不一致或安全风险。
+> 以下约束来自 `project_memory.md`，违反将导致数据不一致或安全风险。
 
 | 约束 ID | 内容 | 影响范围 |
 |---------|------|----------|
@@ -2140,8 +2165,8 @@ sequenceDiagram
 
 **—— 文档结束 ——**
 
-🔒 本文档为灵枢项目企业内部绝密资料，请按 Need-to-Know 原则使用。
+🔒 本文档为 TSOFTP所有，请按角色需求使用。
 
-**版权所有 © 2026 灵枢项目组。保留所有权利。**
+**版权所有 © 2026 TSOFTP。保留所有权利。**
 
 </div>

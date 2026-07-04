@@ -699,15 +699,10 @@ watch([bookId, chapterId], loadAppearingCharacters);
 onMounted(() => {
   loadCharacters();
   loadAppearingCharacters();
-  // 监听写回完成事件，自动刷新人物列表
-  on('lingshu:characters-updated', handleWritebackCompleted);
-  on('lingshu:writeback-completed', handleWritebackCompleted);
-  // 探针扫描完成后也刷新章节人物
+  // 探针扫描完成后刷新章节人物（appearingCharacters 为组件本地数据，store 不管理）
   on('lingshu:probe-scan-completed', handleProbeScanCompleted);
 });
 onUnmounted(() => {
-  off('lingshu:characters-updated', handleWritebackCompleted);
-  off('lingshu:writeback-completed', handleWritebackCompleted);
   off('lingshu:probe-scan-completed', handleProbeScanCompleted);
 });
 
@@ -730,15 +725,6 @@ function handleProbeScanCompleted(payload) {
   if (!payload || !bookId.value) return;
   if (Number(payload.book_id) !== Number(bookId.value)) return;
   loadAppearingCharacters();
-}
-
-function handleWritebackCompleted(payload) {
-  // 仅当事件涉及当前书籍时刷新
-  if (!payload || !bookId.value) return;
-  if (payload.bookId && Number(payload.bookId) !== Number(bookId.value)) return;
-  // 写回目标是 character 或批量写回时刷新
-  if (payload.writebackTarget && payload.writebackTarget !== 'character') return;
-  loadCharacters();
 }
 
 function isProtagonistRole(role) {

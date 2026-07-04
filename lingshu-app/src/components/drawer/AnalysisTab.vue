@@ -2540,9 +2540,10 @@ function _setupWsListener() {
         cardUid: payload.card_uid,
         appliedTable: payload.applied_table,
         appliedId: payload.applied_id,
-        writebackTarget: payload.applied_table === 'characters' ? 'character'
+        // 批量写回不带 writebackTarget，依赖 store 的"不带字段则刷新"逻辑
+        writebackTarget: payload.batch ? undefined : (payload.applied_table === 'characters' ? 'character'
           : payload.applied_table === 'world_entries' ? 'world_entry'
-          : payload.applied_table === 'books' ? 'book' : undefined,
+          : payload.applied_table === 'books' ? 'book' : undefined),
         source: 'ws',
       });
       // 同步刷新当前 tab 的 V3 诊断和运行列表

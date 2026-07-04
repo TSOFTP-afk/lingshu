@@ -41,6 +41,12 @@ export const useWorldStore = defineStore('world', () => {
     if (lastBookId.value) fetchWorld(lastBookId.value);
   }
 
+  function setWorld({ worldText: wt, worldData: wd, worldSchema: ws } = {}) {
+    if (wt !== undefined) worldText.value = wt;
+    if (wd !== undefined) worldData.value = wd;
+    if (ws !== undefined) worldSchema.value = ws;
+  }
+
   function _bindBusListeners() {
     if (_busListenersBound) return;
     const { on } = useEventBus();
@@ -62,5 +68,5 @@ export const useWorldStore = defineStore('world', () => {
   // 首次调用时绑定事件监听
   _bindBusListeners();
 
-  return { worldText, worldData, worldSchema, loading, fetchWorld, refresh };
+  return { worldText, worldData, worldSchema, loading, fetchWorld, refresh, setWorld };
 });

@@ -114,7 +114,8 @@ const props = defineProps({
 });
 
 const { on, off } = useEventBus();
-const activeTab = ref('overview');
+const activeTab = ref(localStorage.getItem('lingshu_drawer_active_tab') || 'overview');
+watch(activeTab, (value) => localStorage.setItem('lingshu_drawer_active_tab', value));
 const showShortcuts = computed(() => props.selectionKind === 'book');
 const validTabs = computed(() => new Set([
   'overview',

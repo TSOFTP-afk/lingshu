@@ -68,4 +68,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     setSavingChapterOrder,
     resetWorkspace,
   };
+}, {
+  persist: {
+    key: 'lingshu_workspace_state',
+    storage: localStorage,
+    paths: ['editorMode'],
+  },
 });

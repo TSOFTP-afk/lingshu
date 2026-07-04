@@ -29,16 +29,18 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useBookStore } from '../../stores/book';
+import { useWorldStore } from '../../stores/world';
 import { useEventBus } from '../../composables/useEventBus';
 import api from '../../utils/api';
 import StructuredTemplateForm from '../common/StructuredTemplateForm.vue';
 
 const bookStore = useBookStore();
+const worldStore = useWorldStore();
 const bookId = computed(() => bookStore.currentBookId);
-const { on, off } = useEventBus();
+const { emit } = useEventBus();
 
 const worldText = ref('');
 const worldData = ref({});
@@ -46,23 +48,17 @@ const worldSchema = ref([]);
 const saving = ref(false);
 let _saveTimer = null;
 
+// store 数据变化时（首次加载、WS 写回等）同步到本地编辑状态
+watch(() => worldStore.worldText, (v) => { worldText.value = v || ''; });
+watch(() => worldStore.worldData, (v) => { worldData.value = v || {}; });
+watch(() => worldStore.worldSchema, (v) => { worldSchema.value = v || []; });
+
 async function loadWorld() {
   if (!bookId.value) {
-    worldText.value = '';
-    worldData.value = {};
-    worldSchema.value = [];
+    worldStore.setWorld({ worldText: '', worldData: {}, worldSchema: [] });
     return;
   }
-  try {
-    const { data } = await api.get(`/workspace/books/${bookId.value}/world`);
-    worldText.value = data.world_text || '';
-    worldData.value = data.world_data || {};
-    worldSchema.value = data.world_schema || [];
-  } catch {
-    worldText.value = '';
-    worldData.value = {};
-    worldSchema.value = [];
-  }
+  await worldStore.fetchWorld(bookId.value);
 }
 
 function onChange() {
@@ -77,9 +73,21 @@ async function onSave() {
     const { data } = await api.put(`/workspace/books/${bookId.value}/world`, {
       world_data: worldData.value || {},
     });
-    worldText.value = data.world_text || '';
-    worldData.value = data.world_data || worldData.value || {};
-    worldSchema.value = data.world_schema || worldSchema.value || [];
+    const newWorldText = data.world_text || '';
+    const newWorldData = data.world_data || worldData.value || {};
+    const newWorldSchema = data.world_schema || worldSchema.value || [];
+    // 同步本地编辑状态
+    worldText.value = newWorldText;
+    worldData.value = newWorldData;
+    worldSchema.value = newWorldSchema;
+    // 同步 world store，通知其他依赖世界卡的组件
+    worldStore.setWorld({
+      worldText: newWorldText,
+      worldData: newWorldData,
+      worldSchema: newWorldSchema,
+    });
+    // 通知其他组件刷新
+    emit('lingshu:world-updated', { bookId: bookId.value, source: 'manual_save' });
     ElMessage.success('世界观已保存');
   } catch { ElMessage.error('保存失败'); }
   finally { saving.value = false; }
@@ -88,23 +96,7 @@ async function onSave() {
 watch(bookId, loadWorld);
 onMounted(() => {
   loadWorld();
-  // 监听写回完成事件，自动刷新世界观
-  on('lingshu:world-updated', handleWritebackCompleted);
-  on('lingshu:writeback-completed', handleWritebackCompleted);
 });
-onUnmounted(() => {
-  off('lingshu:world-updated', handleWritebackCompleted);
-  off('lingshu:writeback-completed', handleWritebackCompleted);
-});
-
-function handleWritebackCompleted(payload) {
-  // 仅当事件涉及当前书籍时刷新
-  if (!payload || !bookId.value) return;
-  if (payload.bookId && Number(payload.bookId) !== Number(bookId.value)) return;
-  // 写回目标是 world_entry 或批量写回时刷新
-  if (payload.writebackTarget && payload.writebackTarget !== 'world_entry') return;
-  loadWorld();
-}
 </script>
 
 <style scoped>

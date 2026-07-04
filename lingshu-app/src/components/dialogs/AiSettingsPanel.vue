@@ -107,6 +107,24 @@
               :step="1024"
             />
           </el-form-item>
+          <el-form-item
+            v-if="shouldShowReasoningEffort(templateProfile)"
+            label="思考深度"
+          >
+            <el-select
+              v-model="templateProfile.reasoning_effort"
+              placeholder="使用厂商默认"
+              clearable
+            >
+              <el-option
+                v-for="level in templateProfile.reasoning_effort_levels"
+                :key="level"
+                :label="REASONING_EFFORT_LABELS[level] || level"
+                :value="level"
+              />
+            </el-select>
+            <span class="form-hint">控制推理深度，越高越慢但更深入</span>
+          </el-form-item>
         </el-form>
         <div class="template-actions">
           <el-button @click="copyTemplateToAll">
@@ -231,6 +249,24 @@
                   />
                   <span class="form-hint">Token 数，控制思考深度</span>
                 </el-form-item>
+                <el-form-item
+                  v-if="shouldShowReasoningEffort(activeProfile)"
+                  label="思考深度"
+                >
+                  <el-select
+                    v-model="activeProfile.reasoning_effort"
+                    placeholder="使用厂商默认"
+                    clearable
+                  >
+                    <el-option
+                      v-for="level in activeProfile.reasoning_effort_levels"
+                      :key="level"
+                      :label="REASONING_EFFORT_LABELS[level] || level"
+                      :value="level"
+                    />
+                  </el-select>
+                  <span class="form-hint">控制推理深度，越高越慢但更深入</span>
+                </el-form-item>
               </el-form>
 
               <div class="purpose-actions">
@@ -273,9 +309,11 @@ import {
   DEFAULT_AI_PROVIDER,
   DEFAULT_BASE_URL,
   MODEL_PROVIDERS,
+  REASONING_EFFORT_LABELS,
   applyModelPreset,
   applyProviderPreset,
   modelPresetsForProvider,
+  shouldShowReasoningEffort,
 } from '../../constants/aiProviders';
 import { useAuthStore } from '../../stores/auth';
 import api from '../../utils/api';
@@ -434,6 +472,9 @@ function createProfile() {
     max_tokens: 4096,
     thinking_enabled: false,
     thinking_budget_tokens: 10000,
+    reasoning_effort: '',
+    supports_reasoning_effort: false,
+    reasoning_effort_levels: [],
   };
 }
 
@@ -449,6 +490,9 @@ function normalizeProfile(profile = {}) {
     max_tokens: Number.isFinite(Number(profile.max_tokens)) ? Number(profile.max_tokens) : 4096,
     thinking_enabled: Boolean(profile.thinking_enabled),
     thinking_budget_tokens: Number.isFinite(Number(profile.thinking_budget_tokens)) ? Number(profile.thinking_budget_tokens) : 10000,
+    reasoning_effort: typeof profile.reasoning_effort === 'string' ? profile.reasoning_effort : '',
+    supports_reasoning_effort: Boolean(profile.supports_reasoning_effort),
+    reasoning_effort_levels: Array.isArray(profile.reasoning_effort_levels) ? [...profile.reasoning_effort_levels] : [],
   };
 }
 </script>

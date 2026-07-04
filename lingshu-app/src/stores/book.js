@@ -308,4 +308,10 @@ export const useBookStore = defineStore('book', () => {
     setTabLoading, setTabContent, updateTabContent, updateTabAiProbability, revertTabContent, setTabError,
     fetchOutline, saveOutline, setOutlineText,
   };
+}, {
+  persist: {
+    key: 'lingshu_book_state',
+    storage: localStorage,
+    paths: ['openTabs', 'tabOrder', 'activeTabKey'],
+  },
 });

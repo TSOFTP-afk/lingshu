@@ -48,6 +48,7 @@ PROFILE_DEFAULTS: dict[str, Any] = {
     "max_tokens": 0,
     "thinking_enabled": False,
     "thinking_budget_tokens": 10000,
+    "reasoning_effort": "",
     "interval_seconds": 8,
     "auto_write_threshold": 0.55,
     "probe_enabled": False,
@@ -97,6 +98,7 @@ def _normalize_profile(profile: dict[str, Any], key: str, *, reveal_secrets: boo
     profile["max_tokens"] = _int(profile.get("max_tokens"), 0)
     profile["thinking_enabled"] = bool(profile.get("thinking_enabled"))
     profile["thinking_budget_tokens"] = _int(profile.get("thinking_budget_tokens"), 10000)
+    profile["reasoning_effort"] = _normalize_reasoning_effort(profile.get("reasoning_effort"))
     profile["interval_seconds"] = max(5, min(60, _int(profile.get("interval_seconds"), 8)))
     profile["auto_write_threshold"] = max(0.0, min(1.0, _float(profile.get("auto_write_threshold"), 0.55)))
     profile["probe_enabled"] = bool(profile.get("probe_enabled"))
@@ -218,6 +220,7 @@ def save_ai_settings(data_dir: Path, payload: dict[str, Any], *, user_id: int | 
             "max_tokens",
             "thinking_enabled",
             "thinking_budget_tokens",
+            "reasoning_effort",
             "interval_seconds",
             "auto_write_threshold",
             "probe_enabled",
@@ -252,6 +255,7 @@ def _save_ai_settings_legacy(data_dir: Path, payload: dict[str, Any]) -> dict[st
             "max_tokens",
             "thinking_enabled",
             "thinking_budget_tokens",
+            "reasoning_effort",
             "interval_seconds",
             "auto_write_threshold",
             "probe_enabled",
@@ -285,6 +289,7 @@ def _save_ai_settings_legacy(data_dir: Path, payload: dict[str, Any]) -> dict[st
         profile["max_tokens"] = _int(profile.get("max_tokens"), 0)
         profile["thinking_enabled"] = bool(profile.get("thinking_enabled"))
         profile["thinking_budget_tokens"] = _int(profile.get("thinking_budget_tokens"), 10000)
+        profile["reasoning_effort"] = _normalize_reasoning_effort(profile.get("reasoning_effort"))
         profile["interval_seconds"] = max(5, min(60, _int(profile.get("interval_seconds"), 8)))
         profile["auto_write_threshold"] = max(0.0, min(1.0, _float(profile.get("auto_write_threshold"), 0.55)))
         profile["probe_enabled"] = bool(profile.get("probe_enabled"))
@@ -346,6 +351,11 @@ def resolve_ai_profile(data_dir: Path, purpose: str | None, *, user_id: int | No
             "type": "enabled",
             "budget_tokens": budget,
         }
+        # reasoning_effort（思考深度档位）：仅当用户显式选择时透传给 API，
+        # OpenAI / DeepSeek V4 / GLM-5 / Doubao 等支持该参数；不支持时由服务端忽略。
+        effort = _normalize_reasoning_effort(profile.get("reasoning_effort"))
+        if effort:
+            existing_extra["reasoning_effort"] = effort
         profile["extra_body"] = json.dumps(existing_extra, ensure_ascii=False)
 
     return profile
@@ -384,3 +394,13 @@ def _int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+# reasoning_effort 合法档位（OpenAI 标准；其他厂商取其子集）
+_REASONING_EFFORT_ALLOWED = {"minimal", "low", "medium", "high", "xhigh"}
+
+
+def _normalize_reasoning_effort(value: Any) -> str:
+    """规整 reasoning_effort 字段，返回合法档位字符串或空串。"""
+    raw = str(value or "").strip().lower()
+    return raw if raw in _REASONING_EFFORT_ALLOWED else ""
