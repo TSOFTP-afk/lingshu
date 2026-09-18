@@ -1,6 +1,8 @@
 """30万字长篇测试 — AI 增强分析 (并发50, 窗口6K)。"""
 from __future__ import annotations
 
+import pytest
+
 import contextlib, json, os, re, sys, time
 from pathlib import Path
 
@@ -12,11 +14,20 @@ from novel_app.analysis.llm_cache import LLMCache
 from novel_app.ai.service import SimpleAIService
 from novel_app.database import Database
 
-os.environ.setdefault("LINGSHU_AI_API_KEY", "sk-test-placeholder")
-os.environ["LINGSHU_AI_BASE_URL"] = "https://api.deepseek.com/v1"
-os.environ["LINGSHU_AI_MODEL"] = "deepseek-chat"
+NOVEL_PATH = os.environ.get("LINGSHU_TEST_NOVEL_PATH", "")
 
-NOVEL_PATH = r"C:\Users\26455\Desktop\蛊真人 作者：蛊真人.txt"
+pytestmark = [
+    pytest.mark.performance,
+    pytest.mark.skipif(not NOVEL_PATH, reason="未设置 LINGSHU_TEST_NOVEL_PATH"),
+]
+
+
+@pytest.fixture(autouse=True)
+def _deepseek_ai_env(monkeypatch):
+    """仅在测试运行时把 AI 环境变量指向 DeepSeek，收集阶段不污染进程环境。"""
+    monkeypatch.setenv("LINGSHU_AI_API_KEY", os.environ.get("LINGSHU_AI_API_KEY", "sk-test-placeholder"))
+    monkeypatch.setenv("LINGSHU_AI_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.setenv("LINGSHU_AI_MODEL", "deepseek-chat")
 TARGET_CHARS = 300_000
 SECTION_HEAD_RE = re.compile(r"^第[一二三四五六七八九十百千\d]{1,4}[节章].*$", re.MULTILINE)
 

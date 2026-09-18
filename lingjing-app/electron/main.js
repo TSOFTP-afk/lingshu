@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, safeStorage } = require('electron')
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const { writeMainLog, isPathAllowed, registerSafeStorageHandlers, registerFileIpcHandlers } = require('../../electron/shared/electron-common');
+const { writeMainLog, isPathAllowed, registerSafeStorageHandlers, registerFileIpcHandlers } = require('./electron-common');
 
 // ============================================================
 //  灵镜管理台 Electron 主进程

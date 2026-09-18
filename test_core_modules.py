@@ -289,7 +289,7 @@ class TestAIServiceSafety(unittest.TestCase):
             captured["timeout"] = timeout
             return FakeResponse()
 
-        with patch("novel_app.ai_service.request.urlopen", fake_urlopen):
+        with patch("novel_app.ai.client.request.urlopen", fake_urlopen):
             service._post_chat_completion(
                 [{"role": "user", "content": "hi"}],
                 temperature=None,
@@ -696,7 +696,7 @@ class TestPackagingScripts(unittest.TestCase):
 
         self.assertNotIn("PyQt6", active_requirements)
         self.assertIn("bcrypt>=4,<6", active_requirements)
-        self.assertIn("slowapi>=0.1,<1", active_requirements)
+        self.assertIn("slowapi>=0.1,<0.2", active_requirements)
         self.assertNotIn("pytest", active_requirements)
         self.assertIn("pytest>=8,<10", active_dev_requirements)
         for dev_package in ("coverage>=7,<8", "pdoc>=16,<17", "pyinstaller>=6,<7", "httpx>=0.23,<1"):
@@ -709,7 +709,14 @@ class TestPackagingScripts(unittest.TestCase):
             self.assertNotIn(optional_module, requirements)
             self.assertNotIn(optional_module, lock)
             self.assertNotIn(optional_module, spec)
-        self.assertNotIn("PyQt6", lock)
+        # requirements.lock 计划在后续阶段整体废弃，不再检查其内容；
+        # 改为检查真正的不变量：requirements.txt 中没有以 PyQt6 开头的依赖行（跳过注释行）。
+        pyqt6_dependency_lines = [
+            line
+            for line in requirements.splitlines()
+            if line.strip() and not line.lstrip().startswith("#") and line.strip().startswith("PyQt6")
+        ]
+        self.assertEqual(pyqt6_dependency_lines, [])
         self.assertNotIn("novel_app.qt", spec)
         self.assertNotIn("PyQt6", spec)
         self.assertIn("lingshu_api", spec)

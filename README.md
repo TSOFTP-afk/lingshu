@@ -12,7 +12,7 @@
 - **后端 API**：`lingshu_api/`，FastAPI REST + WebSocket，默认端口 `8787`。
 - **桌面壳**：`electron/`，默认启动或连接本地 FastAPI；登录解锁 AI、同步、备份等账号能力。
 - **读者/书城端**：`web/`，面向发布、阅读、书架和作者门户。
-- **管理后台**：`admin-web/`、`cloud-admin/`，面向用户、作品、设备、同步、配额和审计管理。
+- **管理后台**：`cloud-admin/`，面向用户、作品、设备、同步、配额和审计管理。
 - **灵镜管理台**：`lingjing-app/`，独立 Electron 管理端，使用密钥文件 + 管理员账号双重认证。
 - **V3 分析引擎**：已落在 `novel_app/analysis/` 和 `lingshu_api/routers/analysis_v3.py`，支持语义分块、实体、事实、记忆、探针、回溯和写回门禁。
 
@@ -98,7 +98,6 @@ python -m pip install -r requirements-dev.txt
 npm install
 npm install --prefix lingshu-app
 npm install --prefix web
-npm install --prefix admin-web
 npm install --prefix cloud-admin
 npm install --prefix lingjing-app
 ```
@@ -143,7 +142,7 @@ npm run dev
 
 - `lingshu-app/`：创作工作台。
 - `web/`：书城/读者端。
-- `admin-web/`：管理后台。
+- `cloud-admin/`：管理后台。
 
 后端仍需单独启动。
 
@@ -219,7 +218,6 @@ python -m pytest tests/test_admin_auth.py tests/test_bookstore_api.py tests/test
 ```powershell
 npm run build --prefix lingshu-app
 npm run build --prefix web
-npm run build --prefix admin-web
 npm run build --prefix cloud-admin
 npm run build:renderer --prefix lingjing-app
 ```
@@ -288,7 +286,6 @@ CI 当前覆盖：
 ├── lingshu-app/                 Vue 创作工作台
 ├── electron/                    灵枢 Electron 工作台壳
 ├── web/                         读者/书城前端
-├── admin-web/                   管理后台前端
 ├── cloud-admin/                 云端管理后台前端
 ├── lingjing-app/                灵镜 Electron 管理台
 ├── novel_app/                   核心业务、AI、数据库、RAG、分析引擎

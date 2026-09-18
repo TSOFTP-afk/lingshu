@@ -10,6 +10,17 @@ import logging
 import traceback
 from datetime import datetime
 
+if __name__ != "__main__":
+    # 导入期安全护栏：本文件被 pytest 收集时会在导入期执行（连接云端数据目录、
+    # 触发完整 AI 分析并可能 sys.exit）。直接运行 `python tests/test_aimd_v3.py` 不受影响。
+    import pytest
+
+    pytestmark = pytest.mark.runtime
+    pytest.skip(
+        "AIMD V3 为真实环境验证脚本（导入期执行副作用），默认收集时跳过",
+        allow_module_level=True,
+    )
+
 os.environ.setdefault('SIMPLE_AI_NOVEL_DATA_DIR', '/home/CODEX/lingshu-cloud/data')
 os.environ.setdefault('BOOKSTORE_DB_PATH', '/home/CODEX/lingshu-cloud/data/bookstore_demo.db')
 

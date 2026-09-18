@@ -14,11 +14,16 @@ import asyncio
 import json
 import os
 import time
-import aiohttp
 
-BASE = "https://www.ling-shu.top"
-WS_BASE = "wss://www.ling-shu.top"
+import pytest
+
+aiohttp = pytest.importorskip("aiohttp")
+
+BASE = os.environ.get("LINGSHU_TEST_BASE", "")
+WS_BASE = BASE.replace("https://", "wss://")
 TEMPLATE_USER_ID = 30  # 用户 004，有完整 AI 配置
+
+pytestmark = pytest.mark.skipif(not BASE, reason="未设置 LINGSHU_TEST_BASE，拒绝直连任何服务器")
 
 
 async def main():

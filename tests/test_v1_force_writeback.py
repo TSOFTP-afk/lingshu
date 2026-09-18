@@ -3,6 +3,17 @@ import json
 import urllib.request
 import urllib.error
 
+if __name__ != "__main__":
+    # 导入期安全护栏：本文件被 pytest 收集时会在导入期直连服务器执行写回。
+    # 直接运行 `python tests/test_v1_force_writeback.py` 不受影响。
+    import pytest
+
+    pytestmark = pytest.mark.runtime
+    pytest.skip(
+        "强制写回为真实环境验证脚本（导入期执行副作用），默认收集时跳过",
+        allow_module_level=True,
+    )
+
 BASE = "http://127.0.0.1:8787"
 USERNAME = "v1_srv_1782911020"
 PASSWORD = "V1Srv1234"

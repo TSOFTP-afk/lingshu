@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 
@@ -31,8 +32,14 @@ def pytest_configure(config):
     )
 
 
-# 整个目录标记为 runtime_e2e
-pytestmark = pytest.mark.runtime_e2e
+def pytest_collection_modifyitems(config, items):
+    # pytestmark 在 conftest 中不生效，改用 hook 给本目录所有 item 加 runtime marker，
+    # 使其被 pytest.ini 的 `-m "not performance and not runtime"` 默认排除。
+    # conftest hook 一旦加载即作用于整个会话，必须按路径过滤，避免殃及目录外的用例。
+    here = Path(__file__).resolve().parent
+    for item in items:
+        if here in Path(item.path).resolve().parents:
+            item.add_marker(pytest.mark.runtime)
 
 # 模块级变量：记录 ensure_servers 启动的前端子进程，供 teardown
 _frontend_procs: list = []

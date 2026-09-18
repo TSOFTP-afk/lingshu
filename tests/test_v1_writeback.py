@@ -12,9 +12,14 @@ V1 一次性分析 + 卡片写回完整测试。
 import asyncio
 import os
 import time
-import aiohttp
 
-BASE = "https://www.ling-shu.top"
+import pytest
+
+aiohttp = pytest.importorskip("aiohttp")
+
+BASE = os.environ.get("LINGSHU_TEST_BASE", "")
+
+pytestmark = pytest.mark.skipif(not BASE, reason="未设置 LINGSHU_TEST_BASE，拒绝直连任何服务器")
 
 
 async def main():
