@@ -12,6 +12,7 @@ V3 AI 分析完整测试 — 复用用户 30 的 AI 配置，克隆到测试用�
 """
 import asyncio
 import json
+import os
 import time
 import aiohttp
 
@@ -49,7 +50,7 @@ async def main():
         ai_config = {
             "remote_enabled": True,
             "provider": "deepseek",
-            "api_key": "sk-81f28dea2df94eaaa676e3e3bb709af4",
+            "api_key": os.environ.get("LINGSHU_AI_API_KEY", "sk-test-placeholder"),
             "base_url": "https://api.deepseek.com",
             "model": "deepseek-v4-flash",
             "temperature": 0.7,

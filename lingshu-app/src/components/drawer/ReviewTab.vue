@@ -32,11 +32,14 @@
       <div
         v-if="findings.length"
         class="findings-list"
+        role="list"
+        aria-label="审查发现列表"
       >
         <div
           v-for="(f, idx) in findings"
           :key="idx"
           class="finding-item"
+          role="listitem"
         >
           <el-tag
             :type="f.level === 'critical' ? 'danger' : f.level === 'warning' ? 'warning' : 'info'"

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -40,6 +40,7 @@ namespace LingShuElectronLauncher
                     splash.SetStage("正在准备 " + LauncherConfig.AppName, "首次启动需要展开本地运行文件");
                     Application.DoEvents();
 
+                    KillProcessesUsingDirectory(installDir);
                     DeleteDir(installDir);
                     Directory.CreateDirectory(installDir);
                     ExtractPayload(installDir, splash);
@@ -176,24 +177,68 @@ namespace LingShuElectronLauncher
             }
         }
 
-        private static void DeleteDir(string path)
+        private static void KillProcessesUsingDirectory(string dir)
         {
+            // 杀掉可执行文件位于 dir 目录下的残留进程（Electron 主进程、python 子进程等），
+            // 避免重新解压时文件被占用导致 IOException。
             try
             {
-                if (Directory.Exists(path))
+                string dirLower = dir.TrimEnd('\\').ToLowerInvariant() + "\\";
+                foreach (Process proc in Process.GetProcesses())
                 {
-                    Directory.Delete(path, true);
+                    try
+                    {
+                        if (proc.HasExited) continue;
+                        string exePath = null;
+                        try
+                        {
+                            System.Diagnostics.ProcessModule mod = proc.MainModule;
+                            if (mod != null) exePath = mod.FileName;
+                        }
+                        catch { }
+                        if (string.IsNullOrEmpty(exePath)) continue;
+                        string exeLower = exePath.Replace('/', '\\').ToLowerInvariant();
+                        if (exeLower.StartsWith(dirLower))
+                        {
+                            try { proc.Kill(); } catch { }
+                            try { proc.WaitForExit(3000); } catch { }
+                        }
+                    }
+                    catch { }
                 }
             }
-            catch
+            catch { }
+        }
+
+        private static void DeleteDir(string path)
+        {
+            if (!Directory.Exists(path)) return;
+
+            // 重试 3 次，每次先 kill 残留进程再删除，间隔递增
+            for (int attempt = 0; attempt < 3; attempt++)
             {
                 try
                 {
-                    string backup = path + "_old_" + Guid.NewGuid().ToString("N").Substring(0, 8);
-                    Directory.Move(path, backup);
+                    Directory.Delete(path, true);
+                    return;
                 }
-                catch { }
+                catch
+                {
+                    if (attempt < 2)
+                    {
+                        KillProcessesUsingDirectory(path);
+                        Thread.Sleep(500 * (attempt + 1));
+                    }
+                }
             }
+
+            // 仍失败则重命名为 backup 目录，下次启动时由用户自行清理
+            try
+            {
+                string backup = path + "_old_" + Guid.NewGuid().ToString("N").Substring(0, 8);
+                Directory.Move(path, backup);
+            }
+            catch { }
         }
 
         private static void ExtractPayload(string installDir, LauncherSplash splash)
@@ -247,11 +292,26 @@ namespace LingShuElectronLauncher
                 Directory.CreateDirectory(parent);
             }
 
-            using (Stream input = entry.Open())
-            using (FileStream output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None))
+            // 重试 3 次应对文件被短暂占用（杀毒软件扫描、文件句柄延迟释放等）
+            Exception lastError = null;
+            for (int attempt = 0; attempt < 3; attempt++)
             {
-                input.CopyTo(output);
+                try
+                {
+                    using (Stream input = entry.Open())
+                    using (FileStream output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+                    {
+                        input.CopyTo(output);
+                    }
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                    if (attempt < 2) Thread.Sleep(300 * (attempt + 1));
+                }
             }
+            if (lastError != null) throw lastError;
         }
     }
 
@@ -328,7 +388,7 @@ namespace LingShuElectronLauncher
             using (Font markFont = new Font("Microsoft YaHei UI", 24, FontStyle.Bold))
             using (SolidBrush textBrush = new SolidBrush(Color.White))
             {
-                e.Graphics.DrawString("灵", markFont, textBrush, new PointF(467, 51));
+                e.Graphics.DrawString("\u7075", markFont, textBrush, new PointF(467, 51));
             }
         }
 

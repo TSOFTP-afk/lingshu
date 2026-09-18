@@ -12,9 +12,11 @@ import asyncio
 import json
 import logging
 from threading import Event
+from typing import Any
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, HTTPException, WebSocket
 
+from lingshu_api.dependencies import check_book_owner, check_chapter_owner
 from lingshu_api.services.ai_settings import resolve_ai_profile
 from lingshu_api.services.db_bridge import get_workspace_db
 from lingshu_api.services.usage_recorder import record_ai_usage
@@ -25,6 +27,14 @@ from novel_app.ai.service import SimpleAIService
 logger = logging.getLogger(__name__)
 router = APIRouter()
 _generation_cancel_events: dict[str, Event] = {}
+
+
+def _to_int(value: Any) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
 
 
 def _workspace_db_from_app(app):
@@ -123,6 +133,24 @@ async def ws_generation(ws: WebSocket):
             task_id = msg.get("task_id", "")
             payload = msg.get("payload", {})
             mode = payload.get("mode", "draft")
+            # 所有权校验（修复 V6-NEW-06：之前完全缺少 check_book_ownership，
+            # 攻击者可传他人 chapter_id 在他人章节写入生成快照）。
+            # 有 chapter_id 时通过 chapter 反查 book 校验；否则校验 book_id。
+            chapter_id = _to_int(payload.get("chapter_id"))
+            book_id = _to_int(payload.get("book_id"))
+            if conn.user and (chapter_id or book_id) and workspace_db:
+                try:
+                    if chapter_id:
+                        check_chapter_owner(workspace_db, chapter_id, dict(conn.user))
+                    elif book_id:
+                        check_book_owner(workspace_db, book_id, dict(conn.user))
+                except HTTPException as exc:
+                    await manager.send(client_id, {
+                        "type": "error",
+                        "task_id": task_id,
+                        "payload": {"message": str(getattr(exc, "detail", "") or "无权操作该书籍")},
+                    })
+                    continue
             cancel_event = Event()
             _generation_cancel_events[client_id] = cancel_event
 

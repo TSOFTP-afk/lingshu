@@ -249,7 +249,8 @@ onMounted(() => {
 .community-view {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   background: var(--bg-secondary);
   color: var(--text-primary);

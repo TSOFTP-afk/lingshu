@@ -190,6 +190,22 @@ class AnalysisStore:
     def save_blocks(self, book_id: int, run_id: int, blocks: list[dict[str, Any]]) -> list[int]:
         return self.database.create_analysis_blocks(book_id, run_id, blocks)
 
+    def find_reusable_run_for_input_hash(
+        self,
+        book_id: int,
+        input_hash: str,
+        *,
+        exclude_run_id: int | None = None,
+    ) -> sqlite3.Row | None:
+        """查找具有相同 book_id + input_hash 且已产生 block 的历史 run。"""
+        return self.database.find_reusable_run_for_input_hash(
+            book_id, input_hash, exclude_run_id=exclude_run_id,
+        )
+
+    def clone_blocks(self, book_id: int, source_run_id: int, target_run_id: int) -> int:
+        """从 source_run_id 克隆 analysis_blocks 到 target_run_id，返回克隆行数。"""
+        return self.database.clone_analysis_blocks(book_id, source_run_id, target_run_id)
+
     def list_blocks(
         self,
         book_id: int,

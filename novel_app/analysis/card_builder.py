@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,6 +19,8 @@ from novel_app.analysis.entity_resolver import (
 )
 from novel_app.analysis.models import AnalysisCardDraft
 from novel_app.database import Database
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -285,19 +288,22 @@ def _summarize_value(value: Any, max_chars: int = 240) -> str:
     return f"{text[: max_chars - 3]}..."
 
 
-def _payload_names(payload: dict[str, Any]) -> list[str]:
+def _payload_names(payload: dict[str, Any], max_depth: int = 10) -> list[str]:
     names: list[str] = []
 
-    def walk(value: Any) -> None:
+    def walk(value: Any, _depth: int = 0) -> None:
+        if _depth > max_depth:
+            logger.warning("_payload_names exceeded max_depth=%d, truncating", max_depth)
+            return
         if isinstance(value, dict):
             name = value.get("name") or value.get("title") or value.get("character_name") or value.get("entity_name")
             if isinstance(name, str) and name.strip():
                 names.append(name.strip())
             for item in value.values():
-                walk(item)
+                walk(item, _depth + 1)
         elif isinstance(value, list):
             for item in value:
-                walk(item)
+                walk(item, _depth + 1)
 
     walk(payload)
     return list(dict.fromkeys(names))

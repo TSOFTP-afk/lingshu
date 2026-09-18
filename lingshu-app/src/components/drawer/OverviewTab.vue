@@ -1,5 +1,8 @@
 <template>
-  <div class="overview-tab">
+  <div
+    class="overview-tab"
+    aria-label="作品概览"
+  >
     <div class="ov-header">
       <h3>{{ bookTitle || '未选择书籍' }}</h3>
       <el-button

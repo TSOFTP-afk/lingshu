@@ -1,6 +1,12 @@
 import type { Ref } from 'vue';
 import axios from 'axios';
 import { ElMessage } from 'element-plus';
+import {
+  formatNumber,
+  formatValue,
+  formatBytes,
+  formatDuration,
+} from '../../../shared/formatters';
 
 export type Row = Record<string, any>;
 
@@ -99,38 +105,10 @@ export function useApi(token: Ref<string>) {
     return response.data;
   }
 
-  function formatNumber(value: number | string | undefined | null) {
-    const num = Number(value || 0);
-    if (!Number.isFinite(num)) return '0';
-    return Math.round(num).toLocaleString();
-  }
-
-  function formatValue(value: unknown) {
-    if (value === null || value === undefined || value === '') return '-';
-    if (typeof value === 'object') return JSON.stringify(value);
-    return String(value);
-  }
-
-  function formatBytes(bytes: number | undefined | null) {
-    if (!bytes && bytes !== 0) return '-';
-    if (bytes === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let i = 0;
-    let val = bytes;
-    while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
-    return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-  }
-
-  function formatDuration(seconds: number | string | undefined | null) {
-    const total = Math.max(0, Math.floor(Number(seconds || 0)));
-    const days = Math.floor(total / 86400);
-    const hours = Math.floor((total % 86400) / 3600);
-    const minutes = Math.floor((total % 3600) / 60);
-    if (days > 0) return `${days}天 ${hours}小时`;
-    if (hours > 0) return `${hours}小时 ${minutes}分钟`;
-    if (minutes > 0) return `${minutes}分钟`;
-    return `${total}秒`;
-  }
+  // formatNumber / formatValue / formatBytes / formatDuration 已迁移至
+  // ../../../shared/formatters（V5-P3-05），上方通过 import 引入。
+  // 此处仅保留 formatStatCard：它依赖 cloud-admin 特有的 Row + card.format 语义，
+  // 不适合作为通用函数共享。
 
   function formatStatCard(card: Row) {
     if (card.format === 'duration') return formatDuration(card.value);

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 from typing import Any
 
 from novel_app.analysis.models import AnalysisCardDraft
@@ -194,7 +195,7 @@ def _fact_payload(fact: dict[str, Any]) -> dict[str, Any]:
     return {
         "fact_uid": str(fact.get("fact_uid") or ""),
         "fact_type": str(fact.get("fact_type") or "event"),
-        "summary": str(value.get("summary") or fact.get("quote_text") or "")[:220],
+        "summary": html.escape(str(value.get("summary") or fact.get("quote_text") or "")[:220]),
         "quote_text": str(fact.get("quote_text") or ""),
         "chapter_id": fact.get("chapter_id"),
         "block_uid": str(fact.get("block_uid") or ""),
@@ -227,7 +228,7 @@ def _summary_from_facts(facts: list[dict[str, Any]]) -> str:
         value = fact.get("value") if isinstance(fact.get("value"), dict) else {}
         text = str(value.get("summary") or fact.get("quote_text") or "").strip()
         if text and text not in snippets:
-            snippets.append(text[:120])
+            snippets.append(html.escape(text[:120]))
     return "；".join(snippets)
 
 
@@ -248,7 +249,7 @@ def _facts_summary_text(facts: list[dict[str, Any]], fact_type_filter: str | Non
         value = fact.get("value") if isinstance(fact.get("value"), dict) else {}
         text = str(value.get("summary") or fact.get("quote_text") or "").strip()
         if text and text not in snippets:
-            snippets.append(text[:200])
+            snippets.append(html.escape(text[:200]))
     return "；".join(snippets)
 
 

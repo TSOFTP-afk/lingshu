@@ -25,9 +25,12 @@ function writeMainLog(level, message, extra = '') {
 }
 
 // ------------------------------------------------------------------
-//  路径白名单校验：只允许访问 userData 目录
+//  路径白名单校验：仅允许访问 userData 下指定子目录
 //  使用 realpathSync 解析符号链接，防止通过符号链接绕过白名单
+//  白名单子目录：logs / config / cache / exports
 // ------------------------------------------------------------------
+
+const ALLOWED_SUBDIRS = ['logs', 'config', 'cache', 'exports'];
 
 function isPathAllowed(filePath) {
   const userDataPath = app.getPath('userData');
@@ -44,7 +47,14 @@ function isPathAllowed(filePath) {
   } catch (_err) {
     realUserDataPath = userDataPath;
   }
-  return resolved.startsWith(realUserDataPath + path.sep) || resolved === realUserDataPath;
+  // 拒绝路径遍历与绝对路径绕过
+  const relativePath = path.relative(realUserDataPath, resolved);
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    return false;
+  }
+  // 仅允许白名单子目录下的文件（userData 根目录本身不允许直接读取）
+  const topDir = relativePath.split(path.sep)[0];
+  return ALLOWED_SUBDIRS.includes(topDir);
 }
 
 // ------------------------------------------------------------------
@@ -92,7 +102,8 @@ function registerFileIpcHandlers() {
       throw new Error('Invalid argument: filePath must be a non-empty string');
     }
     if (!isPathAllowed(filePath)) {
-      throw new Error('Access denied: path outside allowed directory');
+      writeMainLog('WARN', 'fs:readFile denied', `path not in whitelist: ${filePath}`);
+      throw new Error('Access denied: path not in whitelist');
     }
     const stat = await fs.promises.stat(filePath);
     if (stat.size > MAX_FILE_SIZE) {
@@ -109,7 +120,8 @@ function registerFileIpcHandlers() {
       throw new Error('Invalid argument: content must be a string');
     }
     if (!isPathAllowed(filePath)) {
-      throw new Error('Access denied: path outside allowed directory');
+      writeMainLog('WARN', 'fs:writeFile denied', `path not in whitelist: ${filePath}`);
+      throw new Error('Access denied: path not in whitelist');
     }
     if (content.length > MAX_FILE_SIZE) {
       throw new Error(`Content too large: ${content.length} bytes (max ${MAX_FILE_SIZE} bytes)`);
@@ -123,7 +135,8 @@ function registerFileIpcHandlers() {
       throw new Error('Invalid argument: filePath must be a non-empty string');
     }
     if (!isPathAllowed(filePath)) {
-      throw new Error('Access denied: path outside allowed directory');
+      writeMainLog('WARN', 'fs:stat denied', `path not in whitelist: ${filePath}`);
+      throw new Error('Access denied: path not in whitelist');
     }
     const stat = await fs.promises.stat(filePath);
     return {
@@ -145,4 +158,5 @@ module.exports = {
   registerSafeStorageHandlers,
   registerFileIpcHandlers,
   MAX_FILE_SIZE,
+  ALLOWED_SUBDIRS,
 };

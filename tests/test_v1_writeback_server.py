@@ -3,6 +3,7 @@ V1 一次性分析 + 卡片写回测试（服务器端，纯标准库，同步�
 直接连接 127.0.0.1:8787，绕过 Nginx 60s 超时。
 """
 import json
+import os
 import time
 import urllib.request
 import urllib.error
@@ -82,7 +83,7 @@ def main():
     print(f"\n=== 设置 AI 配置 ===")
     ai_config = {
         "remote_enabled": True, "provider": "deepseek",
-        "api_key": "sk-81f28dea2df94eaaa676e3e3bb709af4",
+        "api_key": os.environ.get("LINGSHU_AI_API_KEY", "sk-test-placeholder"),
         "base_url": "https://api.deepseek.com", "model": "deepseek-v4-flash",
         "temperature": 0.7, "max_tokens": 4096,
         "thinking_enabled": False, "thinking_budget_tokens": 10000,

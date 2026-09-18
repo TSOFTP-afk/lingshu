@@ -137,3 +137,19 @@ def check_book_owner(db: WorkspaceDB, book_id: int, user: dict) -> None:
     """校验书籍归属，不属于当前用户则抛 403。"""
     if not db.check_book_ownership(book_id, int(user["id"])):
         raise HTTPException(status_code=403, detail="无权操作该书籍")
+
+
+def check_chapter_owner(db: WorkspaceDB, chapter_id: int, user: dict) -> int:
+    """通过 chapter_id 反查 book_id 并校验所有权。
+
+    用于 WebSocket 等 only-chapter_id 场景，防止攻击者只传 chapter_id 绕过 book_id 所有权校验（V6 IDOR）。
+    章节不存在抛 404；不属于当前用户抛 403。返回归属的 book_id。
+    """
+    chapter = db.get_chapter(chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    book_id = int(chapter.get("book_id") or 0)
+    if not book_id:
+        raise HTTPException(status_code=404, detail="章节未关联书籍")
+    check_book_owner(db, book_id, user)
+    return book_id

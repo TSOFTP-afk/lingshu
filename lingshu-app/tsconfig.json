@@ -4,7 +4,7 @@
     "useDefineForClassFields": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "strict": false,
+    "strict": true,
     "jsx": "preserve",
     "resolveJsonModule": true,
     "isolatedModules": true,
@@ -14,6 +14,6 @@
     "allowJs": true,
     "checkJs": false
   },
-  "include": ["src/**/*.js", "src/**/*.vue", "vite.config.js"],
+  "include": ["src/**/*.js", "src/**/*.ts", "src/**/*.vue", "vite.config.js"],
   "exclude": ["dist", "node_modules"]
 }

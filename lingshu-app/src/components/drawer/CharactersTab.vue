@@ -33,13 +33,19 @@
     <div
       v-if="displayedCharacters.length"
       class="char-list"
+      role="list"
+      aria-label="人物卡列表"
     >
       <div
         v-for="ch in displayedCharacters"
         :key="ch.id"
         class="char-item"
         :class="{ 'char-item--active': selectedId === ch.id }"
+        role="listitem"
+        tabindex="0"
+        :aria-current="selectedId === ch.id ? 'true' : undefined"
         @click="onSelect(ch)"
+        @keydown.enter.prevent="onSelect(ch)"
       >
         <div
           class="char-avatar"
@@ -79,6 +85,7 @@
       :show-close="false"
       align-center
       destroy-on-close
+      aria-labelledby="character-dialog-title"
     >
       <template #header>
         <div
@@ -93,6 +100,7 @@
           </div>
           <div class="dialog-header-info">
             <div class="dialog-header-line">
+              <span id="character-dialog-title" class="sr-only">人物卡详情</span>
               <el-input
                 v-model="editForm.name"
                 size="default"

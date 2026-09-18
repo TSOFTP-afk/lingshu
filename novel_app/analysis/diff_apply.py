@@ -421,6 +421,7 @@ def apply_analysis_cards(
         payload,
         allow_weak_evidence=allow_weak_evidence,
         requires_evidence=requires_evidence,
+        verify_ownership=False,
     )
 
     applied = 0

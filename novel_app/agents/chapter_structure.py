@@ -349,3 +349,71 @@ class ChapterStructureAgent:
             seen.add(key)
             merged.append(item)
         return merged
+
+    def review_catalog(
+        self,
+        catalog_summary: str,
+        total_chapters: int,
+    ) -> list[dict[str, Any]]:
+        """校验正则解析得到的目录是否合理，返回可疑章节区间。
+
+        :param catalog_summary: ``build_catalog_summary`` 生成的目录摘要
+        :param total_chapters: 章节总数
+        :return: ``[{"start_chapter": int, "end_chapter": int, "reason": str}, ...]``
+
+        AI 只负责指出可疑的章节序号区间，不负责重新解析。
+        """
+        prompt = (
+            "你是长篇小说导入结构校验智能体。下面是正则解析得到的小说目录摘要，\n"
+            "格式为：序号|字数|卷|类型|标题\n\n"
+            f"全书共 {total_chapters} 章。请检查目录是否存在以下问题：\n"
+            "- 某些章节字数异常（过短如<200字，可能是误切分；或异常长>10000字，可能是漏切分）\n"
+            "- 标题看起来不像章节标题（是正文句子被误识别为标题）\n"
+            "- 章节序号不连续或标题重复\n"
+            "- 缺少章节（一大段文本没有切分）\n\n"
+            "只返回 JSON，不要解释。JSON 格式：\n"
+            '{"issues":[{"start_chapter":85,"end_chapter":90,"reason":"第85-90章字数仅100-300字，可能被误切分"}, ...]}\n\n'
+            "规则：\n"
+            "- start_chapter 和 end_chapter 使用目录摘要中的序号（1-based, 含两端）\n"
+            "- end_chapter >= start_chapter\n"
+            "- 把连续的异常章节合并为一个区间\n"
+            "- 只报告真正可疑的区域，不要把正常的章节标为问题\n"
+            '- 如果目录看起来正常，返回 {"issues":[]}\n'
+            "- 最多报告 10 个问题区域\n\n"
+            f"目录摘要：\n{catalog_summary}"
+        )
+        result = self._post_chat(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "你是小说导入结构校验智能体，只负责检查目录问题并返回 JSON。",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.05,
+        )
+        raw = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+        payload = extract_json_object(raw)
+        issues = payload.get("issues", [])
+        if not isinstance(issues, list):
+            return []
+        # 过滤有效项
+        valid: list[dict[str, Any]] = []
+        for item in issues[:10]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                start_chapter = int(item.get("start_chapter", 0) or 0)
+                end_chapter = int(item.get("end_chapter", start_chapter) or start_chapter)
+            except (TypeError, ValueError):
+                continue
+            if start_chapter <= 0:
+                continue
+            if end_chapter < start_chapter:
+                end_chapter = start_chapter
+            valid.append({
+                "start_chapter": start_chapter,
+                "end_chapter": end_chapter,
+                "reason": str(item.get("reason", "") or "")[:200],
+            })
+        return valid

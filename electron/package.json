@@ -19,13 +19,14 @@
                                 "main.js",
                                 "preload.js",
                                 "splash.html",
+                                "shared/**/*",
                                 "dist/**/*",
                                 "!node_modules/**/*"
                             ],
                   "asar":  true,
                   "asarUnpack":  [
-                                    "dist/**/*"
-                                ],
+                                     "dist/**/*"
+                                 ],
                   "extraResources":  [
                                          {
                                              "from":  "../packaging/app_icon.ico",
@@ -66,10 +67,8 @@
                                                           ]
                                              }
                                          ],
-                              "signAndEditExecutable":  true,
-                              "verifyUpdateCodeSignature":  true,
-                              "certificateFile":  "env:WIN_CSC_LINK",
-                              "certificatePassword":  "env:WIN_CSC_KEY_PASSWORD"
+                              "signAndEditExecutable":  false,
+                              "verifyUpdateCodeSignature":  false
                           },
                   "mac":  {
                               "hardenedRuntime":  true,
@@ -84,7 +83,7 @@
                                }
               },
     "devDependencies":  {
-                            "electron":  "^30.5.1",
+                            "electron":  "^33.0.0",
                             "electron-builder":  "^24.0.0"
                         },
     "dependencies":  {

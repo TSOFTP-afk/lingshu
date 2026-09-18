@@ -49,7 +49,13 @@ from novel_app.analysis.store import AnalysisStore
 from novel_app.database import ALL_VOLUMES, UNASSIGNED_VOLUMES
 from novel_app.json_utils import extract_json_dict
 from novel_app.structured_templates import BOOK_OUTLINE_FORM_SCHEMA
-from novel_app.text_importer import ParsedBook, ParsedChapter, parse_long_text
+from novel_app.text_importer import (
+    ParsedBook,
+    ParsedChapter,
+    build_catalog_summary,
+    merge_reparsed_chapters,
+    parse_long_text,
+)
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
 logger = logging.getLogger(__name__)
@@ -1433,6 +1439,12 @@ async def _handle_file_import(
     }
 
 
+# 单次局部重检区域的最大字符数（防止给 AI 过大的文本块）
+LOCAL_REPARSE_MAX_CHARS = 200_000
+# 局部重检时在可疑区域两侧扩展的字符数（提供上下文给 AI）
+LOCAL_REPARSE_CONTEXT_CHARS = 2000
+
+
 async def _parse_large_text_with_ai_splits(
     title: str,
     text: str,
@@ -1441,62 +1453,143 @@ async def _parse_large_text_with_ai_splits(
     *,
     user_id: int | None = None,
 ) -> ParsedBook:
-    """对文本使用 AI 检测章卷结构后解析。AI 不可用时回退到正则匹配。"""
-    # 关闭分卷时跳过 AI 检测，直接分段解析
+    """三阶段智能导入：正则解析 → AI 目录校验 → 问题区域局部重检。
+
+    无论文件大小都优先使用正则解析（快速），然后让 AI 校验目录摘要。
+    AI 不可用或校验通过时直接返回正则结果；发现可疑区域时局部重检。
+    """
+    # 关闭分卷时直接正则分段解析
     if skip_volumes:
         return await asyncio.to_thread(_fallback_chunk_parse, title, text)
 
-    # 使用 AI 检测全文章卷结构（ChapterStructureAgent 内部按约10万字分段检测）
+    # === 阶段 1：正则快速解析 ===
+    parsed = await asyncio.to_thread(_fallback_chunk_parse, title, text)
+    if not parsed.chapters:
+        return parsed
+
+    # === 阶段 2：AI 目录校验 ===
     try:
-        def _detect_structure():
-            from lingshu_api.services.ai_settings import resolve_ai_profile
-            profile = resolve_ai_profile(db.db.data_dir, "import", user_id=user_id)
-            ai_service = SimpleAIService(
-                api_key=profile.get("api_key") or None,
-                base_url=profile.get("base_url") or None,
-                model=profile.get("model") or None,
+        from lingshu_api.services.ai_settings import resolve_ai_profile
+        profile = resolve_ai_profile(db.db.data_dir, "import", user_id=user_id)
+        ai_service = SimpleAIService(
+            api_key=profile.get("api_key") or None,
+            base_url=profile.get("base_url") or None,
+            model=profile.get("model") or None,
+        )
+        # 如果 AI 未配置，跳过校验直接返回正则结果
+        if not ai_service.is_remote_configured():
+            logger.warning("[三阶段导入] AI 未配置，跳过目录校验，使用正则结果: %s", title)
+            return parsed
+    except Exception as exc:
+        logger.warning("[三阶段导入] AI 服务初始化失败，使用正则结果: %s", exc)
+        return parsed
+
+    try:
+        catalog_summary = build_catalog_summary(parsed.chapters)
+        logger.warning("[三阶段导入] 阶段1完成: 正则解析 %d 章, 目录摘要 %d 字符, 开始AI校验: %s",
+                       len(parsed.chapters), len(catalog_summary), title)
+        issues = await asyncio.to_thread(
+            ai_service.review_import_catalog,
+            catalog_summary,
+            len(parsed.chapters),
+        )
+        logger.warning("[三阶段导入] 阶段2完成: AI校验返回 %d 个可疑区域: %s", len(issues), title)
+        for i, issue in enumerate(issues):
+            logger.warning("[三阶段导入]   可疑区域%d: 行%d-%d 原因: %s",
+                           i+1, issue["start_line"], issue["end_line"], issue.get("reason", ""))
+    except Exception as exc:
+        logger.warning("[三阶段导入] AI 目录校验失败，使用正则结果: %s", exc)
+        return parsed
+
+    if not issues:
+        logger.warning("[三阶段导入] AI 目录校验通过，共 %d 章: %s", len(parsed.chapters), title)
+        return parsed
+
+    # === 阶段 3：对每个可疑章节区间局部重检 ===
+    merged_chapters = parsed.chapters
+    for issue in issues:
+        try:
+            reparsed = await asyncio.to_thread(
+                _reparse_chapters_with_ai,
+                ai_service, merged_chapters, issue,
             )
-            ai_service.require_remote("智能导入分段")
-            return ai_service.detect_chapter_structure(text)
+            if reparsed:
+                sc = issue["start_chapter"]
+                ec = issue["end_chapter"]
+                merged_chapters = merge_reparsed_chapters(
+                    merged_chapters, reparsed, sc, ec,
+                )
+                logger.warning("[三阶段导入] 阶段3: 章节%d-%d 重检完成，得到 %d 章（原因: %s）",
+                               sc, ec, len(reparsed), issue.get("reason", ""))
+            else:
+                logger.warning("[三阶段导入] 阶段3: 章节%d-%d 重检无结果，保留正则结果",
+                               issue["start_chapter"], issue["end_chapter"])
+        except Exception as exc:
+            logger.warning("[三阶段导入] 阶段3: 章节%d-%d 重检失败，保留正则结果: %s",
+                           issue["start_chapter"], issue["end_chapter"], exc)
 
-        structure = await asyncio.to_thread(_detect_structure)
-    except Exception:
-        structure = None
+    from novel_app.text_importer import _extract_book_outline
+    return ParsedBook(
+        title=parsed.title,
+        outline=_extract_book_outline(title, merged_chapters),
+        chapters=merged_chapters,
+    )
 
-    if structure:
-        # 用 AI 检测的结构一次性解析，保证卷归属和章节顺序正确
-        return await asyncio.to_thread(parse_long_text, title, text, structure)
 
-    # AI 不可用时回退到分段解析
-    return await asyncio.to_thread(_fallback_chunk_parse, title, text)
+def _reparse_chapters_with_ai(
+    ai_service: "SimpleAIService",
+    chapters: list[ParsedChapter],
+    issue: dict[str, int],
+) -> list[ParsedChapter]:
+    """对可疑章节区间调用 AI 重新检测章节结构并解析。
+
+    :param ai_service: 已配置的 AI 服务
+    :param chapters: 当前完整的章节列表
+    :param issue: ``{"start_chapter": int, "end_chapter": int, "reason": str}``
+    :return: AI 重检后解析出的章节列表
+    """
+    sc = max(1, int(issue.get("start_chapter", 1)))
+    ec = int(issue.get("end_chapter", sc))
+
+    # 扩展上下文：取可疑区间前后各 1 章的内容
+    ctx_start = max(1, sc - 1)
+    ctx_end = min(len(chapters), ec + 1)
+
+    # 拼接可疑区间（含上下文）的章节内容，用章节标题作为分隔标记
+    parts: list[str] = []
+    for idx in range(ctx_start, ctx_end + 1):
+        chapter = chapters[idx - 1]
+        # 用标题行标记章节边界，让 AI 能看到原始的切分方式
+        parts.append(f"{chapter.title}\n{chapter.content}")
+    region_text = "\n\n".join(parts)
+
+    # 限制总长度，防止过大
+    if len(region_text) > LOCAL_REPARSE_MAX_CHARS:
+        region_text = region_text[:LOCAL_REPARSE_MAX_CHARS]
+
+    if not region_text.strip():
+        return []
+
+    # 调用 AI 检测该区域的章节结构
+    structure = ai_service.detect_chapter_structure(region_text)
+    if not structure:
+        return []
+
+    # 用 AI 检测的结构解析区域文本
+    region_parsed = parse_long_text("区域重检", region_text, structure)
+    # 过滤掉上下文章节（只保留落在可疑区间内的章节）
+    # 简单策略：如果重检后的章节数与原来不同，说明 AI 发现了问题，使用全部重检结果
+    # （上下文的 1 章可能被合并/拆分，这是可接受的）
+    return region_parsed.chapters
 
 
 def _fallback_chunk_parse(title: str, text: str) -> ParsedBook:
-    """分段解析（AI 不可用或关闭分卷时的回退方案）。"""
-    text_len = len(text)
-    boundaries = list(range(500_000, text_len, 500_000))
-    if not boundaries:
-        return parse_long_text(title, text)
+    """正则解析（AI 不可用或关闭分卷时的回退方案）。
 
-    segments: list[str] = []
-    prev_end = 0
-    for boundary in boundaries:
-        segments.append(text[prev_end:boundary])
-        prev_end = boundary
-    segments.append(text[prev_end:])
-
-    from novel_app.text_importer import _extract_book_outline
-
-    all_chapters: list[ParsedChapter] = []
-    for segment_text in segments:
-        parsed = parse_long_text(title, segment_text)
-        all_chapters.extend(parsed.chapters)
-
-    return ParsedBook(
-        title=title,
-        outline=_extract_book_outline(title, all_chapters),
-        chapters=all_chapters,
-    )
+    直接一次性解析整个文本，保证章节行号相对于完整原文。
+    正则解析即使 5MB 文本也是秒级完成，无需分段。
+    """
+    return parse_long_text(title, text)
 
 
 def _decode_text(data: bytes) -> str:

@@ -393,6 +393,71 @@ class AnalysisMixin:
         sql += " ORDER BY run_id DESC, id DESC LIMIT 1"
         return self.connection.execute(sql, params).fetchone()
 
+    def find_reusable_run_for_input_hash(
+        self,
+        book_id: int,
+        input_hash: str,
+        *,
+        exclude_run_id: int | None = None,
+    ) -> sqlite3.Row | None:
+        """查找具有相同 book_id + input_hash 且已产生 block 的历史 run，用于跨 run 复用 M1 分块结果。
+
+        返回最近一个匹配的 run（id DESC），不含 block 的 run 会被过滤。
+        """
+        if not input_hash:
+            return None
+        sql = """
+            SELECT r.*
+            FROM analysis_runs AS r
+            WHERE r.book_id = ? AND r.input_hash = ?
+        """
+        params: list[Any] = [book_id, input_hash]
+        if exclude_run_id is not None:
+            sql += " AND r.id != ?"
+            params.append(exclude_run_id)
+        sql += """
+            AND EXISTS (SELECT 1 FROM analysis_blocks b WHERE b.run_id = r.id AND b.book_id = ?)
+            ORDER BY r.id DESC
+            LIMIT 1
+        """
+        params.append(book_id)
+        return self.connection.execute(sql, params).fetchone()
+
+    def clone_analysis_blocks(
+        self,
+        book_id: int,
+        source_run_id: int,
+        target_run_id: int,
+    ) -> int:
+        """从 source_run_id 克隆 analysis_blocks 到 target_run_id，返回克隆的行数。
+
+        使用 INSERT...SELECT 复制全部 block 字段（id 自增，run_id 替换为目标）。
+        克隆前会先删除 target_run_id 下已有的 block（防重复）。
+        """
+        self.connection.execute(
+            "DELETE FROM analysis_blocks WHERE book_id = ? AND run_id = ?",
+            (book_id, target_run_id),
+        )
+        cursor = self.connection.execute(
+            """
+            INSERT INTO analysis_blocks (
+                book_id, run_id, block_uid, chunk_id, chunk_index, chapter_id,
+                chapter_ids_json, chapter_refs_json, char_start, char_end,
+                text, summary, content_hash, structure_hash, pipeline_version, metadata_json
+            )
+            SELECT
+                book_id, ?, block_uid, chunk_id, chunk_index, chapter_id,
+                chapter_ids_json, chapter_refs_json, char_start, char_end,
+                text, summary, content_hash, structure_hash, pipeline_version, metadata_json
+            FROM analysis_blocks
+            WHERE book_id = ? AND run_id = ?
+            ORDER BY chunk_index ASC, id ASC
+            """,
+            (target_run_id, book_id, source_run_id),
+        )
+        self.connection.commit()
+        return int(cursor.rowcount)
+
     def delete_analysis_blocks_for_run(self, book_id: int, run_id: int) -> None:
         self.connection.execute(
             "DELETE FROM analysis_blocks WHERE book_id = ? AND run_id = ?",
@@ -432,6 +497,23 @@ class AnalysisMixin:
             "DELETE FROM analysis_entity_mentions WHERE book_id = ? AND run_id = ?",
             (book_id, run_id),
         )
+        return self._insert_analysis_entity_mentions(book_id, run_id, mentions)
+
+    def add_analysis_entity_mentions(
+        self,
+        book_id: int,
+        run_id: int,
+        mentions: list[dict[str, Any]],
+    ) -> list[int]:
+        """增量插入实体提及，不执行 DELETE。用于流式写入场景，逐批写入避免内存累积。"""
+        return self._insert_analysis_entity_mentions(book_id, run_id, mentions)
+
+    def _insert_analysis_entity_mentions(
+        self,
+        book_id: int,
+        run_id: int,
+        mentions: list[dict[str, Any]],
+    ) -> list[int]:
         mention_ids: list[int] = []
         for mention in mentions:
             quote_text = str(mention.get("quote_text") or "").strip()
@@ -1062,6 +1144,15 @@ class AnalysisMixin:
             "DELETE FROM analysis_facts WHERE book_id = ? AND run_id = ?",
             (book_id, run_id),
         )
+        return self._insert_analysis_facts(book_id, run_id, facts)
+
+    def add_analysis_facts(
+        self,
+        book_id: int,
+        run_id: int,
+        facts: list[dict[str, Any]],
+    ) -> list[int]:
+        """增量插入原子事实，不执行 DELETE。用于流式写入场景，逐批写入避免内存累积。"""
         return self._insert_analysis_facts(book_id, run_id, facts)
 
     def replace_analysis_facts_for_scope(

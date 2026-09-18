@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from novel_app.analysis.json_safety import safe_json_loads
 from novel_app.database import Database
 
 logger = logging.getLogger(__name__)
@@ -252,7 +253,7 @@ def _extract_payload(card: dict[str, Any]) -> dict[str, Any] | None:
     payload_json = card.get("payload_json")
     if isinstance(payload_json, str) and payload_json:
         try:
-            return json.loads(payload_json)
+            return safe_json_loads(payload_json)  # type: ignore[return-value]
         except (TypeError, ValueError):
             return None
     return None
@@ -364,7 +365,8 @@ def _writeback_character(database: Database, book_id: int, fields: dict[str, Any
                 if existing_id is None:
                     existing_id = int(ch["id"])
         if matched_count > 1:
-            logger.warning("人物写回 name 匹配到多个条目（仅更新第一个）: book_id=%d, name=%s, matched_count=%d", book_id, name, matched_count)
+            logger.warning("人物写回 name 匹配到多个条目（拒绝写回，要求提供 id）: book_id=%d, name=%s, matched_count=%d", book_id, name, matched_count)
+            return WritebackResult(False, "characters", None, f"name '{name}' 匹配到 {matched_count} 个条目，请提供 id 字段指定具体更新对象")
         if existing_id is not None:
             logger.info("人物写回 name 匹配: book_id=%d, id=%d, name=%s", book_id, existing_id, name)
 
@@ -474,7 +476,8 @@ def _writeback_world_entry(database: Database, book_id: int, fields: dict[str, A
                 if existing_id is None:
                     existing_id = int(entry["id"])
         if matched_count > 1:
-            logger.warning("世界观写回 name 匹配到多个条目（仅更新第一个）: book_id=%d, name=%s, matched_count=%d", book_id, name, matched_count)
+            logger.warning("世界观写回 name 匹配到多个条目（拒绝写回，要求提供 id）: book_id=%d, name=%s, matched_count=%d", book_id, name, matched_count)
+            return WritebackResult(False, "world_entry", None, f"name '{name}' 匹配到 {matched_count} 个条目，请提供 id 字段指定具体更新对象")
         if existing_id is not None:
             logger.info("世界观写回 name 匹配: book_id=%d, id=%d, name=%s", book_id, existing_id, name)
 

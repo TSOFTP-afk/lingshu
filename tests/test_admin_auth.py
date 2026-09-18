@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import importlib
+import os
 import sqlite3
 import time
 from datetime import UTC, datetime
@@ -31,7 +32,7 @@ def app_client(tmp_path, monkeypatch):
     db_bridge.reset_default_workspace_db()
 
 
-def _insert_admin(db_path: Path, username: str = "admin", password: str = "strong-pass") -> None:
+def _insert_admin(db_path: Path, username: str = "admin", password: str = os.environ.get("TEST_ADMIN_PASSWORD", "strong-pass")) -> None:
     from lingshu_api.routers.admin_auth import _ensure_admin_tables
 
     _ensure_admin_tables(db_path)
@@ -48,7 +49,7 @@ def _insert_admin(db_path: Path, username: str = "admin", password: str = "stron
         connection.commit()
 
 
-def _insert_admin_key(db_path: Path, key_id: str = "ak_test", secret: str = "test-secret") -> None:
+def _insert_admin_key(db_path: Path, key_id: str = "ak_test", secret: str = os.environ.get("TEST_ADMIN_HMAC_SECRET", "test-secret")) -> None:
     with sqlite3.connect(db_path) as connection:
         admin_id = connection.execute("SELECT id FROM admin_users WHERE username = 'admin'").fetchone()[0]
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
@@ -84,7 +85,7 @@ def _signed_headers(secret: str, key_id: str, method: str, path: str, token: str
     return headers
 
 
-def _signed_login_payload(secret: str, key_id: str, username: str = "admin", password: str = "strong-pass") -> dict[str, str]:
+def _signed_login_payload(secret: str, key_id: str, username: str = "admin", password: str = os.environ.get("TEST_ADMIN_PASSWORD", "strong-pass")) -> dict[str, str]:
     timestamp = str(int(time.time() * 1000))
     return {
         "username": username,

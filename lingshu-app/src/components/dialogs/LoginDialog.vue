@@ -5,6 +5,8 @@
     width="420px"
     append-to-body
     destroy-on-close
+    :close-on-click-modal="false"
+    aria-labelledby="login-dialog-title"
   >
     <template #header>
       <div class="dialog-head">
@@ -12,7 +14,7 @@
           {{ avatarInitial }}
         </div>
         <div>
-          <h3>登录灵枢</h3>
+          <h3 id="login-dialog-title">登录灵枢</h3>
           <p>{{ activeTab === 'login' ? '连接账号后保留本地创作流程' : '创建一个灵枢账号' }}</p>
         </div>
       </div>

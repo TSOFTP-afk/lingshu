@@ -1,0 +1,77 @@
+灵枢(LingShu)——百万字级网文创作 AI 工作台
+
+项目角色:独立开发者,从架构设计到落地实现完整完成
+在线 Demo: https://www.ling-shu.top
+
+项目概述
+
+面向长篇网文创作的本地优先 AI 写作工作台,后端约 30,000 行 Python,前端约 25,000 行 Vue/TS,199 条 API 路由,80+ 张数据库表,4 个 WebSocket 端点,5 个 Vue 前端应用矩阵。核心解决长篇连载中的设定漂移、人物断层、伏笔遗漏问题,关键技术挑战在于:在 AI 生成内容不可信的前提下,如何让 LLM 产出的分析结果安全地回写正式数据库,并在百万字规模下保持记忆一致性。
+
+技术栈
+
+后端: FastAPI + WebSocket + SQLite(WAL 模式) + Redis + faiss-cpu + numpy
+前端: Vue 3 + TypeScript + Vite + Pinia + Element Plus + @antv/g6
+桌面: Electron + electron-builder + electron-updater
+AI  : OpenAI 兼容接口(httpx 异步流式)
+工程: pytest + Vitest + Playwright + GitHub Actions(Windows/Ubuntu 矩阵 CI)
+
+一、自研 AIMD 动态并发控制器(类 TCP 拥塞控制)
+
+问题:V3 分析流水线需要在 64346 字书籍上发起 230+ 次 AI 调用,固定并发数无法适配不同 AI API 的限流策略,过高触发 429 雪崩,过低吞吐不足。
+
+方案:实现 Additive Increase / Multiplicative Decrease 控制器,慢启动阶段成功则 workers 翻倍爬坡(5 → 10 → 20 → 40),达到 ssthresh 后进入拥塞避免阶段线性增长(+1)。回退策略分级:429 限流 ×0.5 大幅削减并重进慢启动,连接错误 ×0.7 中度削减,普通失败 -1 小幅削减,延迟感知(中位延迟 ≥ 基线×2)触发 30s 冷却期防死循环。突发提交上限 BURST_SUBMIT_CAP=8 防瞬间打满,限流退避 2s/4s/8s 指数,超时退避 1s/2s/3s 线性,最大 4 次重试。
+
+结果:在 DeepSeek API 上实现 425 workers 上限下的稳定吞吐,实测 M3 共指消解阶段峰值并发 62 后被 AIMD 正确回退,全程零雪崩。
+
+二、证据门禁 + 原子多表写回(数据一致性工程)
+
+问题:LLM 产出的分析结果存在幻觉风险,直接写入正式 Truth File / RAG 会污染作者设定,且多表写回中途失败会导致数据不一致。
+
+方案:设计 trusted / weak / missing / empty 四级证据评估模型,通过 quote_text 置信度、block_uid 溯源链路判定证据强度。weak 证据受 allow_weak_evidence 开关控制,missing/empty 直接丢弃。通过门禁的卡片进入 Database.transaction() 上下文管理器,设置 _commit_suppressed=True 抑制内层 commit,统一在外层 commit 或 rollback,实现 outline/characters/world/chapters 四类多表操作的原子性。写回前强制创建 analysis_apply_snapshots 快照支持回溯。
+
+结果:杜绝部分写入,失败即全量回滚,在 39 张卡片自动写回场景下零数据不一致。
+
+三、HNSW 向量检索 + FTS5 中文全文检索(双引擎)
+
+向量侧:基于 faiss IndexHNSWFlat,M=32 / ef_construction=40 / ef_search=64,cosine 相似度(向量归一化 + METRIC_INNER_PRODUCT)。设计 oversample_factor=10 过采样策略应对 filter 场景,延迟重建策略(upsert/delete 仅写 SQLite + 标记 dirty,search 时若 dirty 则全量重建 faiss 索引)避免频繁重建。三套 collection 分别承载 blocks / entity_mentions / entity_summaries 向量。
+
+全文侧:SQLite FTS5 虚拟表 content='chapters' 外部表模式,自定义 cjk_unigram(text) 函数把每个 CJK 字符前后加空格实现中文分词,创建 INSERT/DELETE/UPDATE 三个触发器自动同步,bm25(chapters_fts) 排序。FTS5 不可用时降级为 Python 逐章 str.find 扫描。
+
+四、SQLite 并发写入工程(WAL + 两级锁)
+
+问题:SQLite 单机写入瓶颈,多线程并发写入会触发 database is locked。
+
+方案:PRAGMA journal_mode=WAL + busy_timeout=10000 + synchronous=NORMAL + foreign_keys=ON。两级锁保护:Database 层 ThreadSafeConnection 用 RLock 包裹连接,WorkspaceDB 层用 threading.Lock 串行化所有写操作,CloudBookStore 用 BEGIN IMMEDIATE 显式事务。Database 类通过 12 个 Mixin 组合(Library/Schema/Analysis/Characters/StateMachine/SyncChangelog 等)实现职责分离。迁移机制采用 _apply_app_migrations 顺序执行(已应用则跳过),幂等 CREATE TABLE IF NOT EXISTS + _ensure_column ADD COLUMN 捕获重复异常。
+
+五、V3 分析流水线 11 阶段架构(领域引擎设计)
+
+设计 M0 init → M1 语义分块 → M2 实体提及 → M3 共指消解 → M3+ 身份消解 → M4 原子事实 → M7 记忆分层 → M5 卡片生成 → M5+ 卡片后处理 → M8 文章探针 → Done 的阶段化架构,每阶段独立可重入。M3+ 身份消解采用 Union-Find 跨批合并实体,M7 记忆分层用 ThreadPoolExecutor(6 workers)后台并行 + 600s 累计预算超时跳过,记忆压缩阈值 DEFAULT_CACHE_COMPRESSION_THRESHOLD=3。8 套 AI 系统提示词分别覆盖 mention/coreference/fact/card_content/memory_score/memory_compress/probe_question/semantic_chunk 任务。
+
+六、双轨认证 + 多层密码哈希(安全工程)
+
+普通用户:Bearer Token(secrets.token_hex(32) 64 字符 hex),SHA256 hash 存储,无 TTL 主动 revoke。
+管理员:HMAC-SHA256 签名,请求头 X-Client-KeyId / X-Client-Ts / X-Client-Sig,服务端校验 timestamp + method + path,5 分钟时间窗口防重放。HMAC 密钥用 AES-256-GCM 加密存储,Token TTL 24h + cleanup_on_startup。
+密码:客户端 PBKDF2-HMAC-SHA256 10 万迭代(pepper + salt)预哈希,服务端 bcrypt rounds=12 二次哈希。pepper/salt 各 64 字符 hex 自动生成,环境变量优先。
+WebSocket:首帧必须 {"type":"auth","payload":{"token":"..."}},失败次数超阈值 IP 封禁 900s,MAX_WS_CONNECTIONS=1000,IP 频率限制 120 连接/分钟,消息大小上限 1MB。
+
+七、SSRF 防护 + Electron 沙箱(攻击面收敛)
+
+SSRF:_normalize_base_url 拒绝私有 IP(10.x / 172.16-31.x / 192.168.x / 127.x / 169.254.x)、非 HTTPS 远程、含换行符 URL(防 header 注入)。
+Electron:contextIsolation: true + sandbox: true + nodeIntegration: false,文件 IPC 走 isPathAllowed 白名单,自动更新 verifyUpdateCodeSignature=true 强制签名校验,safeStorage 不可用时拒绝明文保存敏感密钥。
+错误处理:4 个异常处理器,500 错误仅返回 {"detail":"服务器内部错误,请稍后重试"},堆栈只入服务端日志。
+
+八、本地↔云端双向同步引擎
+
+基于 cloud_book_id 绑定 + 标题相似度匹配的双向同步,本地 updated_at vs 云端 updated_at 时间戳比对:本地新则 upload_book_to_cloud,云端新则 download_cloud_book,时间差 ≤ 1s 视为已同步。sync_changelog 表记录离线变更(table_name / row_id / operation / timestamp / synced / payload_json),支持断网后增量补传。Redis 不可用时所有缓存方法返回 None/False,分布式锁返回伪 token nolock:<uuid>,桌面端业务完全不受影响。
+
+九、全栈架构重构(技术决策)
+
+主导 PyQt6 单机版向 Vue3 + Electron + FastAPI 全栈迁移。设计 5 个前端应用矩阵(lingshu-app 写作台 / web 书城 / admin-web + cloud-admin + lingjing-app 三种管理台),18 个 Router 模块,4 个 WebSocket 端点。中间件栈四层:CORS(allow_credentials + Origin 校验) → 安全响应头(X-Frame-Options: DENY / CSP) → HMAC 管理员守卫(/api/admin/ 路径) → v1 别名重写(/api/v1/ → /api/) → slowapi 限流(登录 5/min)。依赖注入体系:require_login / require_author / require_admin / require_ai_access / check_book_owner / verify_publish_token(secrets.compare_digest 防时序攻击)。
+
+十、性能基准与实测数据
+
+V3 八阶段在 64346 字真实书籍上总耗时 2224.7s,产出 29 blocks / 422 mentions / 264 entities / 519 facts / 48 cards / 37 probes,AI 调用 230 次,缓存命中 57 次,自动写回 39 卡片,M2/M4 峰值并发 4,M3 峰值并发 62(被 AIMD 正确回退)。
+
+技术差异化
+
+核心工程力气花在「分析、记忆、证据、写回门禁」上,而非「把生成做得更花哨」。长篇创作的真问题不在生成质量,而在记忆和一致性——在 LLM 不可信的前提下,通过证据门禁 + 原子写回 + Truth File + RAG 分区构建可信的分析回写闭环,这是与同类产品最根本的技术差异。

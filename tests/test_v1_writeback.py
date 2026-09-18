@@ -10,6 +10,7 @@ V1 一次性分析 + 卡片写回完整测试。
 6. 验证写回结果（人物/世界观/大纲是否更新）
 """
 import asyncio
+import os
 import time
 import aiohttp
 
@@ -41,7 +42,7 @@ async def main():
         ai_config = {
             "remote_enabled": True,
             "provider": "deepseek",
-            "api_key": "sk-81f28dea2df94eaaa676e3e3bb709af4",
+            "api_key": os.environ.get("LINGSHU_AI_API_KEY", "sk-test-placeholder"),
             "base_url": "https://api.deepseek.com",
             "model": "deepseek-v4-flash",
             "temperature": 0.7,

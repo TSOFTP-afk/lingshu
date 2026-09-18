@@ -162,7 +162,7 @@ async def apply_analysis_v3_card(
             status_code=409,
             detail={"code": "CONFLICT", "message": f"写回门禁未通过: {', '.join(blockers) if blockers else '运行状态未就绪'}"},
         )
-    actor = payload.actor if payload is not None else "user"
+    actor = "user"
     run_meta = {}
     try:
         run_meta = json.loads(str(run["meta_json"] or "{}"))
@@ -236,7 +236,7 @@ async def writeback_analysis_v3_card(
     if card_status == "superseded":
         raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": "已被取代的卡片不能写回"})
 
-    actor = payload.actor if payload is not None else "user"
+    actor = "user"
     run_meta = {}
     try:
         run_meta = json.loads(str(run["meta_json"] or "{}"))
@@ -355,7 +355,7 @@ async def writeback_analysis_v3_run(
     results = []
     for card in writebackable:
         card_uid = str(_row_value(card, "card_uid") or "")
-        actor = payload.actor if payload is not None else "user"
+        actor = "user"
         try:
             result = await asyncio.to_thread(
                 store.apply_card,

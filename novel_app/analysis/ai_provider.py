@@ -335,6 +335,82 @@ SYSTEM_PROMPT_SEMANTIC_CHUNK = """你是一名专业的小说文本分析助手�
 {"boundaries": [1200, 3500, 6800, 9500]}"""
 
 
+SYSTEM_PROMPT_SEMANTIC_CHUNK_V2 = """你是一名专业的小说文本分块边界优化助手。
+
+## 任务
+给定规则分块器产生的每个边界附近的文本片段（边界左侧 20% + 右侧 20%），判断每个边界位置是否需要微调到更好的语义断点。
+
+## 调整原则
+1. 若边界已在段落结尾、句号、换行、场景切换处 → 保持不变
+2. 若边界在句子中间或对话中间 → 微调到附近最近的语义断点（句号/换行/段落边界）
+3. 不要大幅移动边界，只在窗口范围内微调
+4. 边界偏移是相对于章节开头的绝对字符位置，必须为整数
+5. 不要新增或删除边界，只调整现有边界位置
+6. 边界位置按升序排列
+
+## 规则
+- 只返回纯 JSON 对象，禁止 Markdown 代码块、注释或解释文字
+- 调整后的边界列表置于 "boundaries" 字段
+
+## 输出格式
+{"boundaries": [3500, 6800, 9500]}"""
+
+
+SYSTEM_PROMPT_MENTION_SCREEN = """你是一名实体提及审核助手。给定一批规则提取的实体候选标记（仅含元数据，不含原文），请判断每个标记的可靠性。
+
+## 判定标准
+- confirmed：标记明确是实体，类型正确，可信度高
+- suspicious：标记可能是实体但存在疑点（类型可能错误、名字过短可能是普通词、需上下文确认）
+- reject：标记明显不是实体（普通词、方位词、动词短语、泛称等）
+
+## 每个标记包含
+- marker_id：标记唯一ID
+- quote_text：实体在原文中的字面引用
+- entity_type：规则判定的类型（character/organization/location/item/concept）
+- confidence：规则置信度（0.0-1.0）
+- source_rule：提取规则来源
+- chapter_title：所在章节标题
+- co_occurrence：同一文本块中共同出现的其他实体名称列表
+
+## 规则来源说明
+- formal_character / formal_world_entry：来自数据库已知实体，通常可靠
+- dialogue_pattern：来自"X道："对话模式，较可靠但可能有误判
+- action_pattern：来自"X看着/转身"动作模式，置信度略低
+- suffix_pattern：后缀模式匹配，容易包含前缀残留
+- quoted_title / quoted_name：引号包裹的名称
+
+## 注意事项
+- 2字名字需警惕是否为普通词（如"成功"、"失败"、"忽然"）
+- co_occurrence 中的实体若类型一致且语义相关，可增加可信度
+- chapter_title 可提供场景上下文辅助判断
+
+## 输出格式
+只返回纯 JSON 对象，禁止 Markdown 代码块或解释文字。
+{"results": [{"marker_id": "M1", "verdict": "confirmed", "confidence": 0.9, "reason": "人名，对话模式提取"}, {"marker_id": "M2", "verdict": "suspicious", "confidence": 0.5, "reason": "2字短名，可能是普通词"}, {"marker_id": "M3", "verdict": "reject", "confidence": 0.1, "reason": "明显是普通词"}]}"""
+
+
+SYSTEM_PROMPT_MENTION_REVIEW = """你是一名实体提及复查助手。给定一个可疑的实体标记及其上下文文本，请最终判定该标记是否是有效实体。
+
+## 输入
+- 标记元数据（quote_text, entity_type, source_rule, chapter_title）
+- 上下文文本：标记在原文中出现位置前后各约 300 字的文本片段
+- 标记在上下文中的位置用【标记开始】和【标记结束】标注
+
+## 判定要求
+1. 根据上下文判断标记处的文本是否确实是一个实体提及
+2. 判断实体类型是否正确，如不正确请修正
+3. 如果标记边界有误（多包含了前缀/后缀），给出修正后的 quote_text
+4. 若标记处明显是普通词、方位词、动词短语，判定为 reject
+
+## 输出格式
+只返回纯 JSON 对象，禁止 Markdown 代码块或解释文字。
+{"verdict": "confirmed", "entity_type": "character", "confidence": 0.9, "corrected_quote_text": "林青霞"}
+
+或
+
+{"verdict": "reject", "entity_type": "", "confidence": 0.1, "corrected_quote_text": ""}"""
+
+
 FACT_TYPES = {"event", "relation", "state", "foreshadowing", "world_rule"}
 CARD_TYPES = {"v3_character", "v3_world", "v3_book_summary"}
 CARD_REQUIRED_FIELDS: dict[str, set[str]] = {
@@ -344,7 +420,7 @@ CARD_REQUIRED_FIELDS: dict[str, set[str]] = {
 }
 MEMORY_LEVELS = {"hot", "warm", "cold", "archive"}
 PROBE_TYPES = {"foreshadowing_recovery", "entity_state", "world_rule", "relationship_evolution"}
-AI_TEXT_WINDOW_CHARS = 12000
+AI_TEXT_WINDOW_CHARS = 8000
 AI_TEXT_WINDOW_OVERLAP = 300
 # AI 调用总尝试次数 = 1（首次）+ 3（重试）。可通过环境变量覆盖。
 # 重试时按错误类型应用退避：限流(429)指数退避(2/4/8s)，超时线性退避(1/2/3s)，其他 0.5s。
@@ -365,7 +441,7 @@ SENTENCE_BOUNDARIES = "。！？.!?\n"
 # 给规则引擎留出足够时间完成。
 AI_COREFERENCE_DEADLINE_SECONDS = int(os.environ.get("LINGSHU_ANALYSIS_V3_AI_COREFERENCE_DEADLINE_SECONDS", "300") or 300)
 # 共指消解批次动态并发管理（AIMD 拥塞控制 + 慢启动）。
-# - 物理上限 425：ThreadPoolExecutor 的 max_workers，与 AI_MAX_WORKERS 对齐
+# - 物理上限 500：ThreadPoolExecutor 的 max_workers，与 AI_MAX_WORKERS 对齐
 # - 初始 5：保守起步，避免新用户一上来就打爆 API
 # - 慢启动阶段（current < slow_start_threshold）：成功时翻倍，快速爬坡
 # - 拥塞避免阶段：成功时加性增加（+1），平稳接近上限
@@ -373,9 +449,9 @@ AI_COREFERENCE_DEADLINE_SECONDS = int(os.environ.get("LINGSHU_ANALYSIS_V3_AI_COR
 # - 乘性减少后重新进入慢启动（类 TCP），并下调 ssthresh 以快速恢复
 # 可通过环境变量调整：起始值 LINGSHU_AI_COREFERENCE_CONCURRENCY_INITIAL、
 # 上限 LINGSHU_AI_COREFERENCE_CONCURRENCY_MAX
-AI_COREFERENCE_CONCURRENCY_MAX = max(1, int(os.environ.get("LINGSHU_AI_COREFERENCE_CONCURRENCY_MAX", "425") or 425))
+AI_COREFERENCE_CONCURRENCY_MAX = max(1, int(os.environ.get("LINGSHU_AI_COREFERENCE_CONCURRENCY_MAX", "2000") or 2000))
 AI_COREFERENCE_CONCURRENCY_INITIAL = max(1, min(
-    int(os.environ.get("LINGSHU_AI_COREFERENCE_CONCURRENCY_INITIAL", "5") or 5),
+    int(os.environ.get("LINGSHU_AI_COREFERENCE_CONCURRENCY_INITIAL", "64") or 64),
     AI_COREFERENCE_CONCURRENCY_MAX,
 ))
 BURST_SUBMIT_CAP = int(os.environ.get("LINGSHU_AI_BURST_SUBMIT_CAP", "8") or 8)
@@ -392,14 +468,14 @@ class AITextWindow:
 class AIMDConcurrencyController:
     """AIMD（加性增/乘性减）+ 慢启动动态并发控制器，类 TCP 拥塞控制。
 
-    在传统 AIMD 基础上引入 TCP 慢启动机制，解决高上限（425）下爬坡过慢的问题：
+    在传统 AIMD 基础上引入 TCP 慢启动机制，解决高上限（500）下爬坡过慢的问题：
     - 慢启动阶段（current < ssthresh）：成功时翻倍，5→10→20→40… 快速逼近带宽
     - 拥塞避免阶段（current >= ssthresh）：成功时加性增加（+1），平稳接近 maximum
     - 限流(429)：乘性减少（×0.5），ssthresh 下调为 current/2，重新进入慢启动
     - 连接错误（Remote end closed 等）：乘性减少（×0.7），同样重进慢启动
     - 普通失败：小幅削减（-1），不改变阶段
 
-    相比旧版（纯 +1 爬坡，5→425 需 420 次成功），慢启动可在 ~6 次成功内
+    相比旧版（纯 +1 爬坡，5→500 需 495 次成功），慢启动可在 ~6 次成功内
     从 5 爬到 320，大幅缩短冷启动阶段；乘性减少后的慢启动恢复也更快。
 
     线程安全：所有调整通过 _lock 保护，可在多线程环境下使用。
@@ -501,10 +577,11 @@ class AIMDConcurrencyController:
                     self._latency_baseline = sorted_samples[mid]
 
     def check_latency_degrade(self) -> bool:
-        """检查延迟是否显著恶化（中位延迟 >= 基线 × 2）。
+        """检查延迟是否显著恶化（中位延迟 >= 基线 × 3）。
 
         仅在基线已建立（>=10 次采样）且当前窗口有足够样本（>=10）时检测。
         退化冷却期内（默认 30s）不重复触发，避免同一批样本反复退化导致死循环。
+        阈值 ×3（较 ×2 更宽松），避免 API 自然抖动误判为退化导致并发反复回退。
         """
         with self._lock:
             if self._latency_baseline is None or len(self._latency_samples) < 10:
@@ -519,7 +596,7 @@ class AIMDConcurrencyController:
                 current_median = (sorted_samples[mid - 1] + sorted_samples[mid]) / 2.0
             else:
                 current_median = sorted_samples[mid]
-            return current_median >= self._latency_baseline * 2.0
+            return current_median >= self._latency_baseline * 3.0
 
     def on_latency_degrade(self) -> int:
         """延迟恶化时调用：×0.7 回退 + 下调 ssthresh + 重进慢启动。
@@ -675,8 +752,8 @@ class AIAnalysisProvider:
         (2000, 30),       # < 2000 字: 30 秒
         (4000, 60),       # 2000-4000 字: 60 秒
         (8000, 120),      # 4000-8000 字: 120 秒
-        (15000, 180),     # 8000-15000 字: 180 秒
-        (999999999, 300), # >= 15000 字: 300 秒
+        (15000, 120),     # 8000-15000 字: 120 秒
+        (999999999, 120), # >= 15000 字: 120 秒
     ]
 
     @classmethod
@@ -863,7 +940,7 @@ class AIAnalysisProvider:
         source_rule 标记为 "ai_llm_coreference"。
 
         批次通过线程池并发执行，使用 AIMD 动态并发管理：
-        - 初始并发 5，慢启动翻倍至 ssthresh 后 +1 加性增加，上限 425
+        - 初始并发 5，慢启动翻倍至 ssthresh 后 +1 加性增加，上限 500
         - 延迟感知：中位延迟 ≥ 基线×2 时 ×0.7 回退；突发提交限制每轮最多 8 个
         - 限流(429)时乘性减少（×0.5），普通失败时小幅削减（-1）
         - 使 50 批 ~25s/批的耗时从 1250s 降至 ~25-100s（视 API 承载能力）
@@ -1799,6 +1876,232 @@ class AIAnalysisProvider:
         except Exception as exc:
             self._record_error(stage="ai_semantic_chunk", exc=exc)
             logger.warning("AI semantic chunk failed: %s", exc)
+            return None
+
+    def semantic_chunk_boundaries(
+        self,
+        *,
+        text_len: int,
+        boundary_windows: list[dict[str, Any]],
+        book_id: int = 0,
+        run_id: int = 0,
+    ) -> list[int] | None:
+        """基于边界窗口文本优化分块边界位置（V2 边界窗口模式）。
+
+        不发送整章文本，只发送每个边界附近左右各 20% 的文本片段，
+        让 AI 判断边界是否需要微调到更好的语义断点。
+
+        输入：text_len 章节总长度 + boundary_windows 每个边界的窗口信息。
+        输出：调整后的边界偏移列表（绝对偏移）。AI 调用失败时返回 None。
+        """
+        if not boundary_windows:
+            return None
+        try:
+            # 计算窗口总文本量（用于超时计算）
+            window_text_total = sum(
+                len(str(w.get("left_text", ""))) + len(str(w.get("right_text", "")))
+                for w in boundary_windows
+            )
+
+            # 构造 AI 输入：每个边界的窗口信息
+            windows_payload = [
+                {
+                    "boundary": w["boundary"],
+                    "left_context": w["left_text"],
+                    "right_context": w["right_text"],
+                }
+                for w in boundary_windows
+            ]
+            windows_json = json.dumps(windows_payload, ensure_ascii=False)
+
+            user_prompt = (
+                f"章节总长度：{text_len}\n"
+                f"边界数量：{len(boundary_windows)}\n\n"
+                f"边界窗口（每个边界附带左右上下文片段）：\n{windows_json}\n\n"
+                f"请对每个边界判断当前位置是否在语义断点：\n"
+                f"- 若已在段落结尾/句号/换行处，保持不变\n"
+                f"- 若在句子中间或对话中间，微调到附近最近的语义断点\n"
+                f"- 边界偏移是相对于章节开头的绝对字符位置\n"
+                f"只返回纯 JSON 对象，格式：{{\"boundaries\": [偏移1, 偏移2, ...]}}"
+            )
+
+            output = self._call_llm(
+                stage="ai_semantic_chunk",
+                input_payload={
+                    "book_id": book_id,
+                    "text_length": text_len,
+                    "boundary_count": len(boundary_windows),
+                    "window_text_total": window_text_total,
+                },
+                system_prompt=SYSTEM_PROMPT_SEMANTIC_CHUNK_V2,
+                user_prompt=user_prompt,
+                timeout=self._compute_timeout_for_text(window_text_total),
+            )
+
+            boundaries_data = output.get("boundaries")
+            if not isinstance(boundaries_data, list):
+                return None
+            results: list[int] = []
+            for b in boundaries_data:
+                try:
+                    pos = int(b)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= pos <= text_len:
+                    results.append(pos)
+            if not results:
+                return None
+            return sorted(set(results))
+        except Exception as exc:
+            self._record_error(stage="ai_semantic_chunk", exc=exc)
+            logger.warning("AI semantic chunk boundaries failed: %s", exc)
+            return None
+
+    # ------------------------------------------------------------------
+    # M2 规则先行 + 标记打包 + 异常二次复查
+    # ------------------------------------------------------------------
+
+    def screen_mention_markers(
+        self,
+        markers: list[dict[str, Any]],
+        *,
+        book_id: int,
+        run_id: int,
+        raise_on_error: bool = False,
+    ) -> list[dict[str, Any]]:
+        """批量审核规则提取的实体候选标记（仅元数据，不含原文）。
+
+        输入：markers 列表，每项含 marker_id/quote_text/entity_type/confidence/
+              source_rule/chapter_title/co_occurrence。
+        输出：审核结果列表，每项含 marker_id/verdict(confirmed|suspicious|reject)/
+              confidence/reason。
+
+        LLM 调用失败时返回空列表（由调用方决定降级策略）。
+        """
+        if not markers:
+            return []
+        try:
+            markers_json = json.dumps(markers, ensure_ascii=False)
+            input_payload = {
+                "book_id": book_id,
+                "run_id": run_id,
+                "marker_count": len(markers),
+                "markers": markers,
+            }
+            user_prompt = (
+                f"book_id: {book_id}\n"
+                f"标记数量：{len(markers)}\n"
+                f"标记列表（JSON）：\n{markers_json}\n\n"
+                f"请审核每个标记的可靠性，返回判定结果。"
+            )
+            output = self._call_llm(
+                stage="ai_mention_screen",
+                input_payload=input_payload,
+                system_prompt=SYSTEM_PROMPT_MENTION_SCREEN,
+                user_prompt=user_prompt,
+                timeout=self._compute_timeout_for_text(len(user_prompt)),
+            )
+            results_data = output.get("results")
+            if not isinstance(results_data, list):
+                return []
+            parsed: list[dict[str, Any]] = []
+            valid_ids = {str(m.get("marker_id") or "") for m in markers}
+            for item in results_data:
+                if not isinstance(item, dict):
+                    continue
+                marker_id = str(item.get("marker_id") or "")
+                if marker_id not in valid_ids:
+                    continue
+                verdict = str(item.get("verdict") or "").strip().lower()
+                if verdict not in ("confirmed", "suspicious", "reject"):
+                    verdict = "suspicious"
+                try:
+                    conf = float(item.get("confidence") or 0.5)
+                except (TypeError, ValueError):
+                    conf = 0.5
+                parsed.append({
+                    "marker_id": marker_id,
+                    "verdict": verdict,
+                    "confidence": max(0.0, min(1.0, conf)),
+                    "reason": str(item.get("reason") or ""),
+                })
+            return parsed
+        except Exception as exc:
+            self._record_error(stage="ai_mention_screen", exc=exc)
+            logger.warning("AI mention screen failed: %s", exc)
+            if raise_on_error:
+                raise
+            return []
+
+    def review_suspicious_mention(
+        self,
+        marker: dict[str, Any],
+        context_text: str,
+        *,
+        book_id: int,
+        run_id: int,
+        raise_on_error: bool = False,
+    ) -> dict[str, Any] | None:
+        """对单个可疑标记进行二次复查（携带上下文文本）。
+
+        输入：marker（含 quote_text/entity_type/source_rule/chapter_title）+
+              context_text（标记位置前后各约 300 字，标记位置用【标记开始】【标记结束】标注）。
+        输出：{verdict, entity_type, confidence, corrected_quote_text} 或 None（调用失败）。
+        """
+        if not context_text or not marker:
+            return None
+        try:
+            quote_text = str(marker.get("quote_text") or "")
+            entity_type = str(marker.get("entity_type") or "")
+            source_rule = str(marker.get("source_rule") or "")
+            chapter_title = str(marker.get("chapter_title") or "")
+
+            input_payload = {
+                "book_id": book_id,
+                "run_id": run_id,
+                "marker_id": str(marker.get("marker_id") or ""),
+                "quote_text": quote_text,
+                "entity_type": entity_type,
+                "source_rule": source_rule,
+                "context_length": len(context_text),
+            }
+            user_prompt = (
+                f"标记元数据：\n"
+                f"- quote_text: {quote_text}\n"
+                f"- entity_type: {entity_type}\n"
+                f"- source_rule: {source_rule}\n"
+                f"- chapter_title: {chapter_title}\n\n"
+                f"上下文文本（标记位置已标注）：\n{context_text}\n\n"
+                f"请判定标记是否为有效实体。"
+            )
+            output = self._call_llm(
+                stage="ai_mention_review",
+                input_payload=input_payload,
+                system_prompt=SYSTEM_PROMPT_MENTION_REVIEW,
+                user_prompt=user_prompt,
+                timeout=self._compute_timeout_for_text(len(user_prompt)),
+            )
+            verdict = str(output.get("verdict") or "").strip().lower()
+            if verdict not in ("confirmed", "reject"):
+                verdict = "confirmed"
+            try:
+                conf = float(output.get("confidence") or 0.5)
+            except (TypeError, ValueError):
+                conf = 0.5
+            result_entity_type = str(output.get("entity_type") or entity_type).strip()
+            corrected = str(output.get("corrected_quote_text") or "").strip()
+            return {
+                "marker_id": str(marker.get("marker_id") or ""),
+                "verdict": verdict,
+                "entity_type": result_entity_type,
+                "confidence": max(0.0, min(1.0, conf)),
+                "corrected_quote_text": corrected if corrected else quote_text,
+            }
+        except Exception as exc:
+            self._record_error(stage="ai_mention_review", exc=exc)
+            logger.warning("AI mention review failed: %s", exc)
+            if raise_on_error:
+                raise
             return None
 
     # ------------------------------------------------------------------

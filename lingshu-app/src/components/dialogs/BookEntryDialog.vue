@@ -126,7 +126,7 @@
             {{ fileInfo.name }}
           </el-descriptions-item>
           <el-descriptions-item label="大小">
-            {{ formatSize(fileInfo.size) }}
+            {{ formatBytes(fileInfo.size) }}
           </el-descriptions-item>
           <el-descriptions-item label="导入方式">
             {{ importTarget === 'current' ? '追加到当前作品' : '创建新作品' }}
@@ -236,6 +236,7 @@ import { nextTick, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { UploadFilled } from '@element-plus/icons-vue';
 import api from '../../utils/api';
+import { formatBytes } from '../../../../shared/formatters';
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -323,14 +324,8 @@ function onFileRemove() {
   fileInfo.value = { name: '', size: 0 };
 }
 
-function formatSize(bytes) {
-  if (!bytes) return '0 B';
-  const units = ['B', 'KB', 'MB'];
-  let i = 0;
-  let size = bytes;
-  while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
-  return `${size.toFixed(1)} ${units[i]}`;
-}
+// formatSize 已替换为 shared/formatters 中的 formatBytes（V5-P3-05），
+// 后者支持到 TB 且对 0 / null / undefined 的处理更合理。
 
 async function doImport() {
   if (!selectedFile.value) return;
@@ -355,7 +350,7 @@ async function doImport() {
 
     const { data } = await api.post(url, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 120000,
+      timeout: 300000,
     });
 
     importResult.value = data;

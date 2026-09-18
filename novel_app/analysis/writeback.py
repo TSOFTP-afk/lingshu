@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from novel_app.analysis.evidence import has_direct_evidence, has_evidence
+from novel_app.analysis.json_safety import safe_json_loads
 from novel_app.analysis.models import AnalysisWritebackResult
 from novel_app.analysis.payload_normalizer import normalize_book_analysis_payload
 from novel_app.structured_templates import (
@@ -29,6 +30,44 @@ if TYPE_CHECKING:
     from novel_app.database import Database
 
 
+def _verify_book_chapter_ownership(
+    database: "Database",
+    book_id: int,
+    payload: dict[str, Any],
+    user_id: int | None,
+) -> None:
+    """服务端所有权校验（V5-L04）。
+
+    1. 若提供 user_id，校验 book_id 归属当前用户；
+    2. 校验 payload 中所有 chapter_id 反查的 book_id 与传入 book_id 一致，
+       防止攻击者在 chapter_updates 中混入其他书籍的章节 ID。
+    校验失败抛 ValueError。
+    """
+    if user_id is not None:
+        if not database.check_book_ownership(book_id, user_id):
+            raise ValueError(f"用户 {user_id} 无权操作书籍 {book_id}")
+    chapter_items = payload.get("chapter_updates", [])
+    if not isinstance(chapter_items, list):
+        return
+    for item in chapter_items:
+        if not isinstance(item, dict):
+            continue
+        raw_chapter_id = item.get("chapter_id")
+        if raw_chapter_id is None:
+            continue
+        try:
+            chapter_id = int(raw_chapter_id)
+        except (TypeError, ValueError):
+            continue
+        chapter = database.get_chapter(chapter_id)
+        if not chapter:
+            raise ValueError(f"章节 {chapter_id} 不存在")
+        if int(chapter["book_id"]) != book_id:
+            raise ValueError(
+                f"章节 {chapter_id} 不属于书籍 {book_id}（实际属于 {chapter['book_id']}）"
+            )
+
+
 def apply_book_analysis_payload(
     database: Database,
     book_id: int,
@@ -36,11 +75,16 @@ def apply_book_analysis_payload(
     *,
     allow_weak_evidence: bool = False,
     requires_evidence: bool | None = None,
+    verify_ownership: bool = True,
+    user_id: int | None = None,
 ) -> AnalysisWritebackResult:
     payload = normalize_book_analysis_payload(payload)
     resolved_requires_evidence = book_analysis_requires_evidence(payload) if requires_evidence is None else bool(requires_evidence)
     if resolved_requires_evidence and not allow_weak_evidence:
         payload = filter_untrusted_book_analysis_payload(payload, requires_evidence=True)
+
+    if verify_ownership:
+        _verify_book_chapter_ownership(database, book_id, payload, user_id)
 
     updated_chapter_ids: set[int] = set()
     with database.transaction():
@@ -418,7 +462,7 @@ def analysis_world_text(payload: dict[str, Any]) -> str:
         text = str(value or "").strip()
         if text.startswith("{"):
             try:
-                parsed = json.loads(text)
+                parsed = safe_json_loads(text)
             except (TypeError, ValueError):
                 parsed = None
             if isinstance(parsed, dict):
@@ -508,7 +552,7 @@ def analysis_json_dict(value: Any) -> dict[str, Any] | None:
     if not text or not text.startswith("{"):
         return None
     try:
-        parsed = json.loads(text)
+        parsed = safe_json_loads(text)
     except (TypeError, ValueError):
         return None
     return parsed if isinstance(parsed, dict) else None

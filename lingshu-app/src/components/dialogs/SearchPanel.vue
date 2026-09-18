@@ -91,6 +91,8 @@
       <div
         v-if="showStats"
         class="search-stats"
+        role="status"
+        aria-live="polite"
       >
         <template v-if="scope === 'current'">
           当前章节 {{ currentMatches.length }} 处
@@ -100,14 +102,22 @@
         </template>
       </div>
 
-      <div class="search-results">
+      <div
+        class="search-results"
+        role="list"
+        aria-label="搜索结果列表"
+      >
         <template v-if="scope === 'current'">
           <div
             v-for="(match, idx) in visibleCurrentMatches"
             :key="`${match.start}-${idx}`"
             class="search-item"
             :class="{ 'search-item--active': idx === activeMatchIndex }"
+            role="listitem"
+            :aria-current="idx === activeMatchIndex ? 'true' : undefined"
+            tabindex="0"
             @click="goToMatch(idx)"
+            @keydown.enter.prevent="goToMatch(idx)"
           >
             <div class="result-field">
               正文 · 第 {{ match.line }} 行
@@ -131,7 +141,10 @@
             v-for="(result, idx) in results.slice(0, 100)"
             :key="`${result.chapter_id || result.id}-${result.start}-${idx}`"
             class="search-item"
+            role="listitem"
+            tabindex="0"
             @click="onSelectBookResult(result)"
+            @keydown.enter.prevent="onSelectBookResult(result)"
           >
             <div class="result-field">
               {{ result.volume_title ? `${result.volume_title} · ` : '' }}{{ result.fieldLabel || '正文' }}

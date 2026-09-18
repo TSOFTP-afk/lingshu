@@ -8,7 +8,10 @@
     @close="$emit('close')"
   >
     <div class="reference-shell">
-      <section class="reference-toolbar">
+      <section
+        class="reference-toolbar"
+        aria-label="参考书导入工具栏"
+      >
         <el-upload
           ref="uploadRef"
           :auto-upload="false"
@@ -54,7 +57,10 @@
         </el-button>
       </section>
 
-      <section class="reference-bind">
+      <section
+        class="reference-bind"
+        aria-label="参考书绑定"
+      >
         <el-select
           v-model="bindSourceId"
           filterable
@@ -93,7 +99,10 @@
       </section>
 
       <div class="reference-grid">
-        <section class="reference-list">
+        <section
+          class="reference-list"
+          aria-label="参考书列表"
+        >
           <el-table
             v-loading="loading"
             :data="displayRows"
@@ -178,7 +187,10 @@
           </el-table>
         </section>
 
-        <section class="reference-detail">
+        <section
+          class="reference-detail"
+          aria-label="参考书详情"
+        >
           <div class="detail-title">
             {{ selectedRef ? referenceTitle(selectedRef) : '参考书详情' }}
           </div>

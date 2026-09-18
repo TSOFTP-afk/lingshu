@@ -49,6 +49,27 @@ class AITextAnalysisMixin:
             self._remember_remote_error("章节结构识别", exc)
             raise
 
+    def review_import_catalog(
+        self,
+        catalog_summary: str,
+        total_chapters: int,
+    ) -> list[dict[str, Any]]:
+        """校验正则解析的目录摘要，返回可疑行号区间。
+
+        用于三阶段智能导入的第二阶段：正则解析后让 AI 检查目录是否合理。
+        """
+        if not catalog_summary.strip():
+            return []
+        self.require_remote("导入目录校验")
+        try:
+            from novel_app.agents import ChapterStructureAgent
+
+            agent = ChapterStructureAgent(self._post_json_chat_completion)
+            return agent.review_catalog(catalog_summary, total_chapters)
+        except Exception as exc:
+            self._remember_remote_error("导入目录校验", exc)
+            raise
+
     def detect_ai_probability(self, text: str) -> tuple[int, str]:
         """Estimate whether text looks AI-generated."""
         cleaned = text.strip()

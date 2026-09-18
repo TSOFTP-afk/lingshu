@@ -24,6 +24,19 @@ class FactStore:
             [fact.as_analysis_fact() if isinstance(fact, AtomicFact) else dict(fact) for fact in facts],
         )
 
+    def add_facts(
+        self,
+        book_id: int,
+        run_id: int,
+        facts: list[AtomicFact | dict[str, Any]],
+    ) -> list[int]:
+        """增量插入事实，不执行 DELETE。用于流式写入场景。"""
+        return self.database.add_analysis_facts(
+            int(book_id),
+            int(run_id),
+            [fact.as_analysis_fact() if isinstance(fact, AtomicFact) else dict(fact) for fact in facts],
+        )
+
     def replace_facts_for_scope(
         self,
         book_id: int,

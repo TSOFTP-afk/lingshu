@@ -12,8 +12,9 @@ import json
 import logging
 from threading import Event
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, HTTPException, WebSocket
 
+from lingshu_api.dependencies import check_chapter_owner
 from lingshu_api.services.db_bridge import WorkspaceDB, get_workspace_db
 from lingshu_api.ws.connection import ConnectionManager, authenticate_ws, get_ws_manager
 from lingshu_api.ws.generation import _create_ai_service, _workspace_db_from_app
@@ -76,13 +77,17 @@ async def ws_review(ws: WebSocket):
                 await manager.send(client_id, {"type": "error", "task_id": task_id, "payload": {"message": "缺少 chapter_id 或 content"}})
                 continue
 
-            if book_id and conn.user:
-                user_id = int(conn.user.get("id", 0))
-                if not workspace_db or not workspace_db.check_book_ownership(book_id, user_id):
+            # 所有权校验（修复 V6 IDOR：之前仅当 book_id 存在时校验，
+            # 攻击者只传 chapter_id 可绕过并读取他人章节内容）。
+            # chapter_id 已必填，通过它反查 book_id 并校验归属。
+            if conn.user and workspace_db:
+                try:
+                    check_chapter_owner(workspace_db, chapter_id, dict(conn.user))
+                except HTTPException as exc:
                     await manager.send(client_id, {
                         "type": "error",
                         "task_id": task_id,
-                        "payload": {"message": "无权操作该书籍"},
+                        "payload": {"message": str(getattr(exc, "detail", "") or "无权操作该书籍")},
                     })
                     continue
 

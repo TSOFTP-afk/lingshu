@@ -24,6 +24,19 @@ class EntityStore:
             [mention.as_analysis_mention() for mention in mentions],
         )
 
+    def add_mentions(
+        self,
+        book_id: int,
+        run_id: int,
+        mentions: list[EntityMentionCandidate],
+    ) -> list[int]:
+        """增量插入提及，不执行 DELETE。用于流式写入场景。"""
+        return self.database.add_analysis_entity_mentions(
+            int(book_id),
+            int(run_id),
+            [mention.as_analysis_mention() for mention in mentions],
+        )
+
     def list_mentions(
         self,
         book_id: int,

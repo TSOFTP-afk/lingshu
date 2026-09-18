@@ -3,10 +3,10 @@ from __future__ import annotations
 import logging
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
 
+from novel_app.analysis.pipeline_v3_stages import run_aimd_pool
 from novel_app.analysis.schemas_v3 import SemanticBlock, stable_hash
 
 logger = logging.getLogger(__name__)
@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 SEMANTIC_CHUNKER_VERSION = "semantic_chunker_v1"
 
 # M1 语义分块 AI 边界调整的并发上限
-# 默认 6：DeepSeek API 并发友好值；可通过环境变量覆盖
-CHUNK_AI_MAX_WORKERS = int(os.environ.get("LINGSHU_CHUNK_AI_MAX_WORKERS", "6") or 6)
+# AIMD 动态并发：初始保守爬坡，失败自动回退，物理上限由该值决定
+# 默认 2000：物理上限，实际并发由 run_aimd_pool 的 AIMD 控制器动态管理
+CHUNK_AI_MAX_WORKERS = int(os.environ.get("LINGSHU_CHUNK_AI_MAX_WORKERS", "2000") or 2000)
 
 
 @dataclass(frozen=True)
@@ -78,17 +79,23 @@ class SemanticChunker:
             return []
 
         # 第二步：并发执行 AI 边界调整（仅 AI 模式）
-        # 按 chapter 原始索引存储调整后的 spans，保持章节顺序
+        # 使用 run_aimd_pool 动态并发控制（慢启动 + 三级失败回退），
+        # 与 M2/M4 保持一致，避免高并发下打爆 API 连接。
         adjusted_spans: dict[int, list[TextSpan]] = {}
         if effective_use_ai and effective_ai_provider is not None:
             worker_count = max(1, min(len(chapter_tasks), CHUNK_AI_MAX_WORKERS))
             logger.info(
-                "M1 语义分块 AI 边界调整: %d 章节, %d 并发 worker",
+                "M1 语义分块 AI 边界调整（V2 边界窗口模式）: %d 章节, AIMD max_workers=%d, "
+                "每边界只发左右20%%文本（非整章）",
                 len(chapter_tasks), worker_count,
             )
 
-            def _adjust_one(task_tuple: tuple[int, dict[str, Any], str, list[TextSpan], str]) -> tuple[int, list[TextSpan]]:
+            def _adjust_one(task_tuple: tuple[int, dict[str, Any], str, list[TextSpan], str]) -> list[tuple[int, list[TextSpan]]]:
                 idx, _chapter, chap_content, chap_rule_spans, _hash = task_tuple
+                # 快速取消检查：已取消的任务不再调用 AI
+                _cancel = getattr(self, "_cancel_event", None)
+                if _cancel is not None and callable(getattr(_cancel, "is_set", None)) and _cancel.is_set():
+                    return [(idx, chap_rule_spans)]
                 try:
                     ai_spans = self._ai_adjust_spans(
                         content=chap_content,
@@ -97,21 +104,24 @@ class SemanticChunker:
                         book_id=book_id,
                     )
                     if ai_spans:
-                        return idx, ai_spans
-                    return idx, chap_rule_spans  # AI 失败回退规则
+                        return [(idx, ai_spans)]
+                    return [(idx, chap_rule_spans)]  # AI 失败回退规则
                 except Exception as exc:
                     logger.warning("M1 AI 边界调整失败 chapter_idx=%d: %s", idx, exc)
-                    return idx, chap_rule_spans  # 异常回退规则
+                    return [(idx, chap_rule_spans)]  # 异常回退规则
 
-            with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="chunk-ai") as executor:
-                futures = [executor.submit(_adjust_one, task) for task in chapter_tasks]
-                for future in as_completed(futures):
-                    idx, spans = future.result()
-                    adjusted_spans[idx] = spans
-                    if any(s.reason == "ai_adjusted" for s in spans):
-                        self._last_engine = "ai_assisted"
+            results = run_aimd_pool(
+                chapter_tasks, _adjust_one,
+                max_workers=worker_count,
+                stage_label="m1_chunk_ai",
+                cancel_event=getattr(self, "_cancel_event", None),
+            )
+            for idx, spans in results:
+                adjusted_spans[idx] = spans
+                if any(s.reason == "ai_adjusted" for s in spans):
+                    self._last_engine = "ai_assisted"
         else:
-            # 非模式：直接用规则分块
+            # 非 AI 模式：直接用规则分块
             for idx, _chap, _content, chap_rule_spans, _hash in chapter_tasks:
                 adjusted_spans[idx] = chap_rule_spans
 
@@ -153,28 +163,58 @@ class SemanticChunker:
         ai_provider: Any,
         book_id: int,
     ) -> list[TextSpan]:
-        """调用 AI 微调规则分块的边界。
+        """调用 AI 微调规则分块的边界（V2 边界窗口模式）。
 
-        AI 仅调整边界位置，不改变分块的基本结构。失败或返回无效结果时返回空列表，
-        由调用方回退到规则分块结果。
+        不发送整章文本，只发送每个边界附近左右各 20% 的文本片段，
+        让 AI 判断边界是否需要微调到更好的语义断点。
+        失败或返回无效结果时返回空列表，由调用方回退到规则分块结果。
         """
         if not rule_spans or not ai_provider:
             return []
         try:
-            candidate_boundaries = [span.start for span in rule_spans]
-            if 0 not in candidate_boundaries:
-                candidate_boundaries.insert(0, 0)
+            text_len = len(content)
+            # 提取规则分块的边界列表
+            boundaries = [span.start for span in rule_spans]
+            if 0 not in boundaries:
+                boundaries.insert(0, 0)
+            if text_len not in boundaries:
+                boundaries.append(text_len)
+            boundaries = sorted(set(boundaries))
 
-            ai_boundaries = ai_provider.semantic_chunk(
-                text=content,
-                candidate_boundaries=candidate_boundaries,
+            # 只有一个块时无需调整
+            if len(boundaries) < 2:
+                return []
+
+            # 对每个内部边界提取左右 20% 的窗口文本
+            # 窗口大小 = 0.2 * 相邻块的大小
+            boundary_windows: list[dict[str, Any]] = []
+            for i in range(1, len(boundaries) - 1):
+                b = boundaries[i]
+                prev_b = boundaries[i - 1]
+                next_b = boundaries[i + 1]
+                left_size = int(0.2 * (b - prev_b))
+                right_size = int(0.2 * (next_b - b))
+                left_start = max(0, b - left_size)
+                right_end = min(text_len, b + right_size)
+                boundary_windows.append({
+                    "boundary": b,
+                    "left_text": content[left_start:b],
+                    "right_text": content[b:right_end],
+                })
+
+            if not boundary_windows:
+                return []
+
+            # 调用 V2 边界窗口模式
+            ai_boundaries = ai_provider.semantic_chunk_boundaries(
+                text_len=text_len,
+                boundary_windows=boundary_windows,
                 book_id=book_id,
                 run_id=0,
             )
             if not ai_boundaries:
                 return []
 
-            text_len = len(content)
             safe_boundaries = sorted({
                 int(b) for b in ai_boundaries if 0 <= int(b) <= text_len
             })

@@ -4,12 +4,15 @@
       ref="tabListRef"
       class="tab-list"
       :class="{ 'tab-list--dragging': isDragging }"
+      role="tablist"
+      aria-label="章节标签"
       @wheel.prevent="onWheel"
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
       @pointerleave="onPointerLeave"
+      @keydown="onTabListKeydown"
     >
       <TransitionGroup
         name="chapter-tab"
@@ -18,15 +21,23 @@
       >
         <div
           v-for="tab in tabs"
+          :id="`chapter-tab-${tab.key}`"
           :key="tab.key"
           class="tab-item"
           :class="{ 'tab-item--active': tab.key === activeKey, 'tab-item--dirty': tab.dirty }"
           :data-tab-key="tab.key"
+          role="tab"
+          :aria-selected="tab.key === activeKey ? 'true' : 'false'"
+          :aria-controls="`chapter-panel-${tab.key}`"
+          :tabindex="tab.key === activeKey ? 0 : -1"
         >
           <span class="tab-kind">{{ kindLabel(tab.kind) }}</span>
           <span class="tab-label">{{ tab.dirty ? '● ' : '' }}{{ tab.title }}</span>
           <span
             class="tab-close"
+            role="button"
+            tabindex="-1"
+            aria-label="关闭标签页"
             @pointerdown.stop
             @click.stop="$emit('close', tab.key)"
           >&times;</span>
@@ -105,6 +116,46 @@ function onPointerUp(event) {
 
 function onPointerLeave(event) {
   if (isDragging.value) onPointerUp(event);
+}
+
+function onTabListKeydown(event) {
+  if (!props.tabs.length) return;
+  const currentIdx = props.tabs.findIndex(t => t.key === props.activeKey);
+  let targetIdx;
+  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+    targetIdx = currentIdx < 0 ? 0 : (currentIdx + 1) % props.tabs.length;
+  } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+    targetIdx = currentIdx <= 0 ? props.tabs.length - 1 : currentIdx - 1;
+  } else if (event.key === 'Home') {
+    targetIdx = 0;
+  } else if (event.key === 'End') {
+    targetIdx = props.tabs.length - 1;
+  } else if (event.key === 'Delete' || (event.key === 'w' && (event.ctrlKey || event.metaKey))) {
+    // Ctrl/Cmd+W 关闭当前标签
+    if (props.activeKey != null) {
+      event.preventDefault();
+      emit('close', props.activeKey);
+    }
+    return;
+  } else {
+    return;
+  }
+  if (targetIdx == null || targetIdx < 0 || targetIdx >= props.tabs.length) return;
+  event.preventDefault();
+  const targetKey = props.tabs[targetIdx].key;
+  emit('activate', targetKey);
+  nextTick(() => {
+    const selector = `[data-tab-key="${escapeAttr(String(targetKey))}"]`;
+    const el = tabListRef.value?.querySelector(selector);
+    el?.focus?.();
+  });
+}
+
+function escapeAttr(value) {
+  // 转义 CSS 属性选择器中的特殊字符，回退到手动转义
+  const cssApi = typeof window !== 'undefined' ? window.CSS : null;
+  if (cssApi && cssApi.escape) return cssApi.escape(value);
+  return String(value).replace(/["\\]/g, '\\$&');
 }
 
 function kindLabel(kind) {

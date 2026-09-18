@@ -104,10 +104,33 @@ class WorkspaceDB:
 
     def delete_book(self, book_id: int) -> None:
         with self._write_lock:
-            self.db.connection.execute("DELETE FROM chapters WHERE book_id = ?", (book_id,))
-            self.db.connection.execute("DELETE FROM volumes WHERE book_id = ?", (book_id,))
-            self.db.connection.execute("DELETE FROM books WHERE id = ?", (book_id,))
-            self.db.connection.commit()
+            conn = self.db.connection
+            # 清理分析相关数据（17 张 analysis_* 表，按依赖顺序删除）
+            # 先删依赖表，再删主表，避免外键约束失败
+            _analysis_tables_by_book = [
+                "analysis_apply_snapshots", "analysis_backtrack_tasks",
+                "analysis_card_dependencies", "analysis_probe_results",
+                "analysis_probe_plans", "analysis_events", "analysis_cards",
+                "analysis_facts", "analysis_entity_edges", "analysis_entity_aliases",
+                "analysis_entity_versions", "analysis_entity_mentions",
+                "analysis_entities", "analysis_blocks",
+                "analysis_audit_logs", "analysis_llm_cache", "analysis_runs",
+            ]
+            for table in _analysis_tables_by_book:
+                try:
+                    conn.execute(f"DELETE FROM {table} WHERE book_id = ?", (book_id,))
+                except Exception:
+                    pass  # 表不存在或无 book_id 列，跳过
+            # 清理业务数据
+            conn.execute("DELETE FROM chapters WHERE book_id = ?", (book_id,))
+            conn.execute("DELETE FROM volumes WHERE book_id = ?", (book_id,))
+            conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
+            conn.commit()
+            # 主动 checkpoint，防止 WAL 文件膨胀拖慢后续操作
+            try:
+                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            except Exception:
+                pass
             # 失效所有相关缓存
             self._cache.invalidate_on_book_delete(book_id)
 

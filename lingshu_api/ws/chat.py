@@ -14,8 +14,9 @@ import logging
 from threading import Event, Thread
 from typing import Any
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, HTTPException, WebSocket
 
+from lingshu_api.dependencies import check_book_owner, check_chapter_owner
 from lingshu_api.services.db_bridge import WorkspaceDB, get_workspace_db
 from lingshu_api.services.usage_recorder import record_ai_usage
 from lingshu_api.ws.connection import ConnectionManager, authenticate_ws, get_ws_manager
@@ -108,13 +109,20 @@ async def ws_chat(ws: WebSocket):
 
             payload = msg.get("payload", {}) if isinstance(msg.get("payload"), dict) else {}
             book_id = _to_int(payload.get("book_id"))
-            if book_id and conn.user:
-                user_id = int(conn.user.get("id", 0))
-                if not workspace_db or not workspace_db.check_book_ownership(book_id, user_id):
+            chapter_id = _to_int(payload.get("chapter_id"))
+            # 所有权校验（修复 V6 IDOR：之前仅当 book_id 存在时校验，
+            # 攻击者只传 chapter_id 可绕过并读取他人章节内容）
+            if conn.user and (book_id or chapter_id) and workspace_db:
+                try:
+                    if chapter_id:
+                        check_chapter_owner(workspace_db, chapter_id, dict(conn.user))
+                    elif book_id:
+                        check_book_owner(workspace_db, book_id, dict(conn.user))
+                except HTTPException as exc:
                     await manager.send(client_id, {
                         "type": "error",
                         "task_id": task_id,
-                        "payload": {"message": "无权操作该书籍"},
+                        "payload": {"message": str(getattr(exc, "detail", "") or "无权操作该书籍")},
                     })
                     continue
             cancel_event = Event()

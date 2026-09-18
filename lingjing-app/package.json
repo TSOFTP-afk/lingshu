@@ -64,7 +64,7 @@
     "vue-echarts": "^7.0.0"
   },
   "devDependencies": {
-    "electron": "^30.5.1",
+    "electron": "^33.0.0",
     "electron-builder": "^24.0.0",
     "concurrently": "^8.0.0",
     "wait-on": "^7.0.0",

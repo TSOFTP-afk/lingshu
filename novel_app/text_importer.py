@@ -12,6 +12,7 @@ class ParsedChapter:
     outline: str
     volume_title: str | None = None
     chapter_type: str = "正文"
+    start_line: int = 0  # 章节在原文中的起始行号（1-based），用于 AI 校验定位
 
 
 @dataclass(frozen=True)
@@ -231,6 +232,7 @@ def _normalize_imported_chapter(chapter: ParsedChapter) -> ParsedChapter:
         outline=_extract_chapter_outline(chapter.title, content),
         volume_title=chapter.volume_title,
         chapter_type=chapter.chapter_type,
+        start_line=chapter.start_line,
     )
 
 
@@ -238,6 +240,7 @@ def _parse_by_headings(text: str) -> tuple[list[ParsedChapter], int]:
     chapters: list[ParsedChapter] = []
     current_volume: str | None = None
     current_title: str | None = None
+    current_start_line: int = 0
     buffer: list[str] = []
     explicit_chapter_count = 0
     strong_count, act_count, pipe_section_count, numbered_section_count = _count_heading_candidates(text)
@@ -246,15 +249,19 @@ def _parse_by_headings(text: str) -> tuple[list[ParsedChapter], int]:
     use_acts_as_volumes = act_count >= 2 and (allow_pipe_sections or strong_count >= 2 or numbered_section_count >= 2)
 
     def flush() -> None:
-        nonlocal buffer, current_title
+        nonlocal buffer, current_title, current_start_line
         content = "\n".join(buffer).strip()
         if content:
             title = current_title or f"第{len(chapters) + 1}章"
             chapter_type = _infer_chapter_type(title) if current_title else "正文"
-            chapters.append(ParsedChapter(title=title, content=content, outline="", volume_title=current_volume, chapter_type=chapter_type))
+            chapters.append(ParsedChapter(
+                title=title, content=content, outline="",
+                volume_title=current_volume, chapter_type=chapter_type,
+                start_line=current_start_line,
+            ))
         buffer = []
 
-    for raw_line in text.split("\n"):
+    for line_index, raw_line in enumerate(text.split("\n"), start=1):
         line = _clean_heading_line(raw_line)
         if not chapters and not buffer and _is_front_matter_noise(line):
             current_title = None
@@ -277,6 +284,7 @@ def _parse_by_headings(text: str) -> tuple[list[ParsedChapter], int]:
         ):
             flush()
             current_title = line
+            current_start_line = line_index
             explicit_chapter_count += 1
             continue
         buffer.append(raw_line)
@@ -340,13 +348,13 @@ def _chunk_implicit_chapters(chapters: list[ParsedChapter]) -> list[ParsedChapte
         chunks = _split_into_chunks(chapter.content)
         if len(chunks) == 1:
             title = chapter.title if chapter.title != "第1章" or chapter.volume_title is None else f"{chapter.volume_title} 第1章"
-            chunked.append(ParsedChapter(title=title, content=chunks[0], outline="", volume_title=chapter.volume_title, chapter_type=chapter.chapter_type))
+            chunked.append(ParsedChapter(title=title, content=chunks[0], outline="", volume_title=chapter.volume_title, chapter_type=chapter.chapter_type, start_line=chapter.start_line))
             continue
         for index, chunk in enumerate(chunks, start=1):
             title = f"第{len(chunked) + 1}章"
             if chapter.volume_title:
                 title = f"{chapter.volume_title} 第{index}章"
-            chunked.append(ParsedChapter(title=title, content=chunk, outline="", volume_title=chapter.volume_title, chapter_type=chapter.chapter_type))
+            chunked.append(ParsedChapter(title=title, content=chunk, outline="", volume_title=chapter.volume_title, chapter_type=chapter.chapter_type, start_line=chapter.start_line))
     return chunked
 
 
@@ -448,3 +456,53 @@ def _pick_sentences(content: str, limit: int) -> list[str]:
         if sentence not in picked:
             picked.append(sentence)
     return picked[:limit]
+
+
+# ================================================================
+#  三阶段智能导入辅助：目录摘要 / 局部重检合并
+# ================================================================
+
+def build_catalog_summary(chapters: list[ParsedChapter], max_chars: int = 30000) -> str:
+    """生成目录摘要文本，供 AI 校验。
+
+    每行格式: ``序号|字数|卷|类型|标题``
+    - 序号从 1 开始
+    - 字数为正文字符数（去首尾空白）
+
+    超过 max_chars 时按章节截断（保留前面的章节）。
+    """
+    lines: list[str] = []
+    total_chars = 0
+    for index, chapter in enumerate(chapters, start=1):
+        char_count = len(chapter.content.strip())
+        volume = chapter.volume_title or ""
+        line = f"{index}|{char_count}字|{volume}|{chapter.chapter_type}|{chapter.title}"
+        # 预估 +1 换行
+        if total_chars + len(line) + 1 > max_chars:
+            lines.append(f"...（另有 {len(chapters) - index + 1} 章未列出）")
+            break
+        lines.append(line)
+        total_chars += len(line) + 1
+    return "\n".join(lines)
+
+
+def merge_reparsed_chapters(
+    original: list[ParsedChapter],
+    reparsed: list[ParsedChapter],
+    replace_start_index: int,
+    replace_end_index: int,
+) -> list[ParsedChapter]:
+    """将局部重检的章节合并回原始章节列表（按章节序号替换）。
+
+    :param original: 正则解析的完整章节列表
+    :param reparsed: AI 对问题区域重新解析得到的章节
+    :param replace_start_index: 要替换的起始章节序号（1-based, 含）
+    :param replace_end_index: 要替换的结束章节序号（1-based, 含）
+    :return: 合并后的章节列表
+    """
+    if not reparsed:
+        return original
+    # 0-based 索引
+    s = max(0, replace_start_index - 1)
+    e = min(len(original), replace_end_index)
+    return original[:s] + list(reparsed) + original[e:]

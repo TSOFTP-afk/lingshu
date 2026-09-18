@@ -86,3 +86,50 @@ jobs:
       - name: Build ${{ matrix.project }}
         run: ${{ matrix.command }}
         working-directory: ${{ matrix.project }}
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4  # V5 S-4: 建议后续改为 SHA 锁定引用
+      # Python 依赖审计
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Run pip-audit
+        # 扫描 requirements.txt 中的已知 CVE；如存在已确认误报可追加 --ignore-vuln GHSA-xxxx
+        run: pip-audit -r requirements.txt
+        continue-on-error: false
+      # Node 依赖审计（lingshu-app）
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install lingshu-app deps
+        run: npm ci
+        working-directory: lingshu-app
+      - name: npm audit (lingshu-app)
+        run: npm audit --audit-level=high
+        working-directory: lingshu-app
+        continue-on-error: false
+      # Node 依赖审计（electron）
+      - name: Install electron deps
+        run: npm ci
+        working-directory: electron
+      - name: npm audit (electron)
+        run: npm audit --audit-level=high
+        working-directory: electron
+        continue-on-error: false
+      # Node 依赖审计（cloud-admin）
+      - name: Install cloud-admin deps
+        run: npm ci
+        working-directory: cloud-admin
+      - name: npm audit (cloud-admin)
+        run: npm audit --audit-level=high
+        working-directory: cloud-admin
+        continue-on-error: false

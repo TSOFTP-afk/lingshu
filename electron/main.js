@@ -314,8 +314,12 @@ ipcMain.handle('dialog:openFile', async (_event, options) => {
 // 文件读写（异步）— 由共享模块注册
 registerFileIpcHandlers();
 
-// 获取应用数据路径
+// 获取应用数据路径（白名单校验，防止获取系统任意目录）
+const ALLOWED_PATH_NAMES = ['userData', 'logs', 'desktop', 'documents', 'downloads', 'temp'];
 ipcMain.handle('app:getPath', (_event, name) => {
+  if (!ALLOWED_PATH_NAMES.includes(name)) {
+    throw new Error(`Access denied: path name '${name}' not in whitelist`);
+  }
   return app.getPath(name);
 });
 

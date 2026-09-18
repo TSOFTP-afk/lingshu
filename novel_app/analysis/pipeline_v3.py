@@ -44,8 +44,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 PIPELINE_V3_VERSION = "analysis_v3_m8_probes_v1"
 
-CHAPTER_BATCH_SIZE = 20
-AI_MAX_WORKERS = int(os.environ.get("LINGSHU_ANALYSIS_V3_AI_MAX_WORKERS", "425") or 425)
+CHAPTER_BATCH_SIZE = 200
+AI_MAX_WORKERS = int(os.environ.get("LINGSHU_ANALYSIS_V3_AI_MAX_WORKERS", "2000") or 2000)
 STAGE_TIMEOUT_SECONDS = int(os.environ.get("LINGSHU_ANALYSIS_V3_STAGE_TIMEOUT_SECONDS", "1200") or 1200)
 
 PIPELINE_V3_STAGES = [
@@ -235,9 +235,14 @@ class AnalysisPipelineV3(PipelineV3StagesMixin, PipelineV3IncrementalMixin):
         progress_callback: Any | None = None, use_ai: bool = False,
         chapter_batch_size: int = CHAPTER_BATCH_SIZE, ai_max_workers: int = AI_MAX_WORKERS,
         cancel_event: Any | None = None,
-    ) -> AnalysisPipelineV3Result:
+) -> AnalysisPipelineV3Result:
+        # 存储 cancel_event 到实例，供 run_aimd_pool 等阶段方法检查取消信号
+        self._cancel_event = cancel_event
+        if hasattr(self, "chunker") and self.chunker is not None:
+            self.chunker._cancel_event = cancel_event
         _raise_if_cancelled(cancel_event)
         chapter_payload = [_chapter_dict(item) for item in (chapters if chapters is not None else self._load_book_chapters(book_id))]
+        input_hash = self._input_hash(chapter_payload)
         base_meta = self._stage_meta({
             "pipeline_version": PIPELINE_V3_VERSION, "pipeline_family": "analysis_v3",
             "ai_invoked": use_ai and self.ai_provider is not None,
@@ -246,7 +251,7 @@ class AnalysisPipelineV3(PipelineV3StagesMixin, PipelineV3IncrementalMixin):
         }, "init", source_chapter_count=len(chapter_payload))
         run_id = self.store.create_run(
             int(book_id), scope_type="book", status="running",
-            pipeline_version=PIPELINE_V3_VERSION, input_hash=self._input_hash(chapter_payload),
+            pipeline_version=PIPELINE_V3_VERSION, input_hash=input_hash,
             meta=base_meta, summary="Analysis V3 run created.")
         try:
             _raise_if_cancelled(cancel_event)
@@ -255,29 +260,53 @@ class AnalysisPipelineV3(PipelineV3StagesMixin, PipelineV3IncrementalMixin):
 
             stage_started = self._mark_stage(run_id, base_meta, "l1_semantic_blocks", source_chapter_count=len(chapter_payload))
 
-            # 分批处理章节：大书分批分块，减少内存峰值
+            # 尝试跨 run 复用 M1 分块结果（相同 book_id + input_hash 的历史 run 已有 block）
+            reused_source_run_id: int | None = None
             all_block_payloads: list[dict[str, Any]] = []
-            total_chapters = len(chapter_payload)
-            for batch_start in range(0, max(1, total_chapters), chapter_batch_size):
+            try:
+                source_run = self.store.find_reusable_run_for_input_hash(
+                    int(book_id), input_hash, exclude_run_id=run_id,
+                )
+                if source_run is not None:
+                    source_run_id = int(source_run["id"])
+                    cloned_count = self.store.clone_blocks(int(book_id), source_run_id, run_id)
+                    if cloned_count > 0:
+                        for row in self.store.list_blocks(int(book_id), run_id=run_id, limit=None):
+                            all_block_payloads.append(self._block_row_to_payload(row))
+                        reused_source_run_id = source_run_id
+                        logger.info("M1 blocks reused from run_id=%d → run_id=%d: %d blocks cloned (skipping chunking)",
+                                    source_run_id, run_id, cloned_count)
+                        _emit_progress(progress_callback, stage="l1_semantic_blocks", percent=10,
+                            message=f"语义分块复用: 从 run {source_run_id} 克隆 {cloned_count} 个 block，跳过分块")
+            except Exception as exc:
+                logger.warning("M1 block reuse failed, falling back to chunking: %s", exc)
+
+            if reused_source_run_id is None:
+                # 正常分批处理章节：大书分批分块，减少内存峰值
+                total_chapters = len(chapter_payload)
+                for batch_start in range(0, max(1, total_chapters), chapter_batch_size):
+                    _raise_if_cancelled(cancel_event)
+                    batch_chapters = chapter_payload[batch_start:batch_start + chapter_batch_size]
+                    _emit_progress(progress_callback, stage="l1_semantic_blocks",
+                        percent=5, message=f"正在语义分块: 章节 {batch_start + 1}-{min(batch_start + chapter_batch_size, total_chapters)}/{total_chapters}...")
+                    batch_blocks = self.chunker.chunk_chapters(int(book_id), batch_chapters, pipeline_version=PIPELINE_V3_VERSION, use_ai=use_ai, ai_provider=self.ai_provider if use_ai else None)
+                    all_block_payloads.extend(block.as_analysis_block() for block in batch_blocks)
+                    _emit_progress(progress_callback, stage="l1_semantic_blocks",
+                        percent=min(10, 5 + 5 * (batch_start + 1) // max(1, total_chapters)),
+                        message=f"语义分块: {len(all_block_payloads)} 个 block (章节 {batch_start + 1}-{min(batch_start + chapter_batch_size, total_chapters)}/{total_chapters})")
+                _emit_progress(progress_callback, stage="l1_semantic_blocks", percent=10, message=f"语义分块完成: {len(all_block_payloads)} 个 block")
                 _raise_if_cancelled(cancel_event)
-                batch_chapters = chapter_payload[batch_start:batch_start + chapter_batch_size]
-                _emit_progress(progress_callback, stage="l1_semantic_blocks",
-                    percent=5, message=f"正在语义分块: 章节 {batch_start + 1}-{min(batch_start + chapter_batch_size, total_chapters)}/{total_chapters}...")
-                batch_blocks = self.chunker.chunk_chapters(int(book_id), batch_chapters, pipeline_version=PIPELINE_V3_VERSION, use_ai=use_ai, ai_provider=self.ai_provider if use_ai else None)
-                all_block_payloads.extend(block.as_analysis_block() for block in batch_blocks)
-                _emit_progress(progress_callback, stage="l1_semantic_blocks",
-                    percent=min(10, 5 + 5 * (batch_start + 1) // max(1, total_chapters)),
-                    message=f"语义分块: {len(all_block_payloads)} 个 block (章节 {batch_start + 1}-{min(batch_start + chapter_batch_size, total_chapters)}/{total_chapters})")
-            _emit_progress(progress_callback, stage="l1_semantic_blocks", percent=10, message=f"语义分块完成: {len(all_block_payloads)} 个 block")
-            _raise_if_cancelled(cancel_event)
-            block_ids = self.store.save_blocks(int(book_id), run_id, all_block_payloads) if all_block_payloads else []
+                block_ids = self.store.save_blocks(int(book_id), run_id, all_block_payloads) if all_block_payloads else []
+            else:
+                # 复用模式下 blocks 已通过 clone 落库，不需要再 save_blocks
+                block_ids = []
             self._check_stage_timeout(stage_started, "l1_semantic_blocks")
 
             # 预估 AI 调用量
             if use_ai and self.ai_provider is not None:
                 total_chars = sum(len(str(b.get("text") or "")) for b in all_block_payloads)
                 block_count = len(all_block_payloads)
-                est_windows = max(1, total_chars // 12000)
+                est_windows = max(1, total_chars // 8000)
                 est_calls = est_windows * 2 + 2 + 3  # mention + fact + coreference + post-process
                 adaptive_w = max(4, min(block_count, max(4, est_windows // 2), AI_MAX_WORKERS))
                 logger.info("AI analysis estimate: %d blocks, %d chars, ~%d windows, ~%d API calls, %d workers",
@@ -289,12 +318,12 @@ class AnalysisPipelineV3(PipelineV3StagesMixin, PipelineV3IncrementalMixin):
             skipped_block_count = 0
 
             _raise_if_cancelled(cancel_event)
-            stage_started = self._mark_stage(run_id, base_meta, "entity_mentions", semantic_block_count=len(block_ids))
+            stage_started = self._mark_stage(run_id, base_meta, "entity_mentions", semantic_block_count=len(all_block_payloads))
             mention_count = self.run_entity_mentions(int(book_id), run_id, blocks=blocks_to_process, update_run=False, use_ai=use_ai, ai_max_workers=ai_max_workers)
             self._check_stage_timeout(stage_started, "entity_mentions")
             _emit_progress(progress_callback, stage="entity_mentions", percent=25, message=f"实体提及抽取完成: {mention_count} 个候选")
             _raise_if_cancelled(cancel_event)
-            stage_started = self._mark_stage(run_id, base_meta, "entity_coreference", semantic_block_count=len(block_ids), mention_count=mention_count)
+            stage_started = self._mark_stage(run_id, base_meta, "entity_coreference", semantic_block_count=len(all_block_payloads), mention_count=mention_count)
             self._index_mentions_to_vector_store(int(book_id), run_id)
             entity_count = self.run_entity_coreference(int(book_id), run_id, update_run=False, use_ai=use_ai)
             self._check_stage_timeout(stage_started, "entity_coreference")
@@ -328,12 +357,11 @@ class AnalysisPipelineV3(PipelineV3StagesMixin, PipelineV3IncrementalMixin):
                 logger.warning("foreshadow sync failed (non-fatal): %s", _e)
 
             _raise_if_cancelled(cancel_event)
-            # 记忆分层改为后台静默执行，不阻塞主流程
-            self._mark_stage(run_id, base_meta, "memory_layer", mention_count=mention_count, entity_count=entity_count, fact_count=fact_count)
-            self.run_memory_layer_background(int(book_id), run_id, use_ai=use_ai)
-            # 后台执行中，主流程使用占位结果（后台完成后通过 audit_log 记录实际数据）
-            memory_result = {"fact_count": fact_count, "classified_fact_count": 0, "summary_fact_count": 0}
-            _emit_progress(progress_callback, stage="memory_layer", percent=65, message="记忆分层：后台静默进行中")
+            stage_started = self._mark_stage(run_id, base_meta, "memory_layer", mention_count=mention_count, entity_count=entity_count, fact_count=fact_count)
+            memory_result = self.run_memory_layer(int(book_id), run_id, update_run=False, use_ai=use_ai)
+            self._check_stage_timeout(stage_started, "memory_layer")
+            _emit_progress(progress_callback, stage="memory_layer", percent=65,
+                           message=f"记忆分层完成: 分类 {memory_result['classified_fact_count']} 条, 摘要 {memory_result['summary_fact_count']} 条")
             _raise_if_cancelled(cancel_event)
             stage_started = self._mark_stage(run_id, base_meta, "card_events", mention_count=mention_count, entity_count=entity_count, fact_count=fact_count)
             card_result = self.run_card_events(int(book_id), run_id, update_run=False, use_ai=use_ai)
@@ -720,6 +748,28 @@ class AnalysisPipelineV3(PipelineV3StagesMixin, PipelineV3IncrementalMixin):
             digest.update(str(chapter.get("content") or "").encode("utf-8"))
             digest.update(b"\0")
         return digest.hexdigest()
+
+    @staticmethod
+    def _block_row_to_payload(row: Any) -> dict[str, Any]:
+        """将 analysis_blocks 的 Row 转换为与 SemanticBlock.as_analysis_block() 一致的 dict 格式。
+
+        解析 chapter_ids_json / chapter_refs_json / metadata_json 为 Python 对象。
+        """
+        import json as _json
+        result = dict(row)
+        # 解析 JSON 字段为 Python 对象
+        for key_json, key in (("chapter_ids_json", "chapter_ids"), ("chapter_refs_json", "chapter_refs"), ("metadata_json", "metadata")):
+            raw = result.pop(key_json, None)
+            if raw is None:
+                result.setdefault(key, [] if key != "metadata" else {})
+            elif isinstance(raw, str):
+                try:
+                    result[key] = _json.loads(raw)
+                except (TypeError, ValueError, _json.JSONDecodeError):
+                    result[key] = [] if key != "metadata" else {}
+            else:
+                result[key] = raw
+        return result
 
 
 def _emit_progress(callback: Any, *, stage: str, percent: int, message: str) -> None:

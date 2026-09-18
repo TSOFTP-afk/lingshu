@@ -1,27 +1,26 @@
 <template>
-  <div class="drawer-panel">
+  <div
+    class="drawer-panel"
+    role="region"
+    aria-label="工具箱抽屉"
+  >
     <div class="drawer-titlebar">
-      <span class="drawer-title">工具箱</span>
+      <span
+        id="drawer-title"
+        class="drawer-title"
+      >工具箱</span>
     </div>
 
     <el-tabs
       v-model="activeTab"
       class="drawer-tabs"
+      aria-labelledby="drawer-title"
     >
       <el-tab-pane name="overview">
         <template #label>
           <span class="drawer-tab-label"><el-icon><Histogram /></el-icon>概览</span>
         </template>
         <OverviewTab />
-      </el-tab-pane>
-      <el-tab-pane
-        v-if="showShortcuts"
-        name="shortcuts"
-      >
-        <template #label>
-          <span class="drawer-tab-label"><el-icon><Operation /></el-icon>快捷键</span>
-        </template>
-        <ShortcutsTab />
       </el-tab-pane>
       <el-tab-pane name="characters">
         <template #label>
@@ -92,13 +91,11 @@ import {
   Histogram,
   List,
   MagicStick,
-  Operation,
   Tickets,
   User,
 } from '@element-plus/icons-vue';
 import { useEventBus } from '../../composables/useEventBus';
 import OverviewTab from './OverviewTab.vue';
-import ShortcutsTab from './ShortcutsTab.vue';
 import CharactersTab from './CharactersTab.vue';
 import WorldTab from './WorldTab.vue';
 import SkillsTab from './SkillsTab.vue';
@@ -116,10 +113,8 @@ const props = defineProps({
 const { on, off } = useEventBus();
 const activeTab = ref(localStorage.getItem('lingshu_drawer_active_tab') || 'overview');
 watch(activeTab, (value) => localStorage.setItem('lingshu_drawer_active_tab', value));
-const showShortcuts = computed(() => props.selectionKind === 'book');
 const validTabs = computed(() => new Set([
   'overview',
-  ...(showShortcuts.value ? ['shortcuts'] : []),
   'characters',
   'world',
   'skills',

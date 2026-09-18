@@ -22,6 +22,14 @@
         >
           已保存
         </el-tag>
+        <el-tag
+          v-if="readonly"
+          type="info"
+          size="small"
+          effect="dark"
+        >
+          展示态
+        </el-tag>
       </div>
       <div class="toolbar-right">
         <span class="word-count">正文 {{ wordCount }} 字</span>
@@ -30,6 +38,15 @@
           class="ai-probability"
           :class="aiProbabilityClass"
         >{{ aiProbabilityText }}</span>
+        <el-button
+          v-if="readonly"
+          type="primary"
+          size="small"
+          @click="$emit('edit')"
+        >
+          <el-icon><Edit /></el-icon>
+          <span>编辑</span>
+        </el-button>
       </div>
     </div>
 
@@ -132,36 +149,43 @@
 
     <div class="editor-body">
       <div
+        ref="nativeEditorRef"
         class="native-text-editor"
         @click="focus"
       >
         <div
           class="line-marker-layer"
           aria-hidden="true"
+          :style="{ transform: `translateY(${-markerScrollTop}px)` }"
+        >
+          <div class="line-marker-padding-top" />
+          <div
+            v-for="item in visualLines"
+            :key="item.key"
+            class="line-marker-row"
+          >
+            <span class="line-marker">{{ item.number }}</span>
+          </div>
+        </div>
+
+        <!-- 隐藏的镜像层：用于测量每个逻辑行的视觉行数，与 textarea 共享字体/宽度/软换行规则 -->
+        <div
+          ref="mirrorRef"
+          class="content-mirror"
+          aria-hidden="true"
         >
           <div
-            class="line-marker-spacer"
-            :style="{ height: `${virtualScrollTop}px` }"
-          />
-          <div
-            v-for="line in visibleLines"
-            :key="line.index"
-            class="line-marker-row"
-            :class="{ 'line-marker-row--blank': !line.text.trim() }"
-          >
-            <span class="line-marker">{{ line.text.trim() ? line.number : '' }}</span>
-            <span class="line-marker-text">{{ line.text || ' ' }}</span>
-          </div>
-          <div
-            class="line-marker-spacer"
-            :style="{ height: `${virtualScrollBottom}px` }"
-          />
+            v-for="(line, idx) in allLines"
+            :key="idx"
+            class="mirror-line"
+          >{{ line.text || ' ' }}</div>
         </div>
 
         <textarea
           ref="textareaRef"
           v-model="localContent"
           class="content-textarea"
+          :readonly="readonly"
           spellcheck="false"
           autocomplete="off"
           autocorrect="off"
@@ -254,6 +278,7 @@ import {
   CopyDocument,
   DataAnalysis,
   DocumentChecked,
+  Edit,
   EditPen,
   MagicStick,
   RefreshLeft,
@@ -276,13 +301,16 @@ const props = defineProps({
   showActionbar: { type: Boolean, default: true },
   aiProbability: { type: Number, default: 0 },
   aiProbabilityLevel: { type: String, default: 'none' },
+  readonly: { type: Boolean, default: true },
 });
 
-const emit = defineEmits(['update:content', 'change', 'save', 'revert', 'detect-ai']);
+const emit = defineEmits(['update:content', 'change', 'save', 'revert', 'detect-ai', 'edit']);
 
 const localContent = ref(props.content);
 const applyingExternalContent = ref(false);
 const textareaRef = ref(null);
+const nativeEditorRef = ref(null);
+const mirrorRef = ref(null);
 const polishDialogVisible = ref(false);
 const polishLoading = ref(false);
 const polishOriginal = ref('');
@@ -295,14 +323,11 @@ const probeTimer = ref(null);
 const probeIntervalMs = ref(PROBE_DEFAULT_INTERVAL_MS);
 const probeConfigLoaded = ref(false);
 
-// 虚拟滚动状态
+// 行号层跟随 textarea 滚动（transform: translateY）
 const VIRTUAL_LINE_HEIGHT = 24; // 与 --content-line-height 默认值一致
 const VIRTUAL_PADDING_Y = 12; // 与 --content-editor-padding-y 默认值一致
-const VIRTUAL_BUFFER = 10; // 上下缓冲行数
-const virtualScrollTop = ref(0);
-const virtualScrollBottom = ref(0);
-const visibleStartLine = ref(0);
-const visibleEndLine = ref(0);
+const markerScrollTop = ref(0);
+let resizeObserver = null;
 
 watch(() => props.content, (val) => {
   if (val !== localContent.value) {
@@ -387,16 +412,43 @@ async function loadProbeConfig() {
 const editorLines = computed(() => (localContent.value || '').split('\n'));
 const totalLineCount = computed(() => editorLines.value.length);
 
-const visibleLines = computed(() => {
+const allLines = computed(() => {
   const lines = editorLines.value;
-  const start = Math.max(0, visibleStartLine.value);
-  const end = Math.min(lines.length, visibleEndLine.value);
-  const result = [];
-  for (let i = start; i < end; i += 1) {
-    result.push({ index: i, number: i + 1, text: lines[i] });
-  }
-  return result;
+  return lines.map((text, index) => ({ index, number: index + 1, text }));
 });
+
+// 视觉行号：每个逻辑行根据软换行展开成 N 个视觉行，每行 24px
+// 通过镜像层测量每个逻辑行的高度，除以行高得到视觉行数
+const visualLines = ref([]);
+
+function recomputeVisualLines() {
+  const mirror = mirrorRef.value;
+  if (!mirror) {
+    // 兜底：mirror 未就绪时按每行 1 个视觉行
+    visualLines.value = allLines.value.map((line) => ({ key: line.index, number: line.number }));
+    return;
+  }
+  const lineEls = mirror.querySelectorAll('.mirror-line');
+  const lineHeight = VIRTUAL_LINE_HEIGHT;
+  const result = [];
+  let visualNumber = 1;
+  lineEls.forEach((el) => {
+    const h = el.getBoundingClientRect().height;
+    const count = Math.max(1, Math.round(h / lineHeight));
+    for (let i = 0; i < count; i += 1) {
+      // 仅该逻辑行的第一视觉行显示行号，其余空——但用户要求每行连续编号
+      // 这里改为：每个视觉行都编一个连续号
+      result.push({ key: `${result.length}`, number: visualNumber });
+      visualNumber += 1;
+    }
+  });
+  visualLines.value = result;
+}
+
+// 监听内容变化、容器宽度变化时重新计算视觉行
+watch([allLines], () => {
+  nextTick(recomputeVisualLines);
+}, { flush: 'post' });
 
 const wordCount = computed(() => {
   const text = localContent.value || '';
@@ -674,19 +726,8 @@ function escapeRegExp(value) {
 function syncMarkerScroll() {
   const textarea = textareaRef.value;
   if (!textarea) return;
-  const scrollTop = textarea.scrollTop;
-  const viewportHeight = textarea.clientHeight;
-  const paddingY = VIRTUAL_PADDING_Y;
-
-  // 计算可见行范围（含缓冲区）
-  const firstVisible = Math.floor(Math.max(0, scrollTop - paddingY) / VIRTUAL_LINE_HEIGHT);
-  const lastVisible = Math.ceil((scrollTop + viewportHeight - paddingY) / VIRTUAL_LINE_HEIGHT);
-  visibleStartLine.value = Math.max(0, firstVisible - VIRTUAL_BUFFER);
-  visibleEndLine.value = Math.min(totalLineCount.value, lastVisible + VIRTUAL_BUFFER);
-
-  // 计算上下占位高度（包含 padding 补偿）
-  virtualScrollTop.value = visibleStartLine.value * VIRTUAL_LINE_HEIGHT + paddingY;
-  virtualScrollBottom.value = Math.max(0, (totalLineCount.value - visibleEndLine.value) * VIRTUAL_LINE_HEIGHT + paddingY);
+  // 行号层通过 transform: translateY(-scrollTop) 跟随 textarea 滚动
+  markerScrollTop.value = textarea.scrollTop;
 }
 
 function focus() {
@@ -696,7 +737,18 @@ function focus() {
 onMounted(() => {
   on('lingshu:chapter-find', onChapterFind);
   on('lingshu:chapter-replace', onChapterReplace);
-  nextTick(syncMarkerScroll);
+  nextTick(() => {
+    recomputeVisualLines();
+    syncMarkerScroll();
+  });
+  // 监听编辑器容器尺寸变化（拖拽分隔条、窗口缩放），重新计算视觉行
+  if (typeof ResizeObserver !== 'undefined' && nativeEditorRef.value) {
+    resizeObserver = new ResizeObserver(() => {
+      recomputeVisualLines();
+      syncMarkerScroll();
+    });
+    resizeObserver.observe(nativeEditorRef.value);
+  }
   loadProbeConfig();
 });
 
@@ -704,6 +756,10 @@ onUnmounted(() => {
   off('lingshu:chapter-find', onChapterFind);
   off('lingshu:chapter-replace', onChapterReplace);
   clearProbeTimer();
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
 });
 
 defineExpose({
@@ -865,47 +921,63 @@ defineExpose({
 
 .line-marker-layer {
   position: absolute;
-  inset: 0;
-  overflow: hidden;
+  top: 0;
+  left: 0;
+  width: var(--content-gutter-width);
   display: flex;
   flex-direction: column;
-  padding-right: var(--content-editor-padding-right);
   color: #0c6f88;
   font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
   font-size: var(--content-font-size);
   line-height: var(--content-line-height);
   pointer-events: none;
   user-select: none;
+  will-change: transform;
+  /* 外层 native-text-editor 负责裁剪溢出内容 */
 }
 
-.line-marker-spacer {
+.line-marker-padding-top {
+  height: var(--content-editor-padding-y);
   flex-shrink: 0;
 }
 
 .line-marker-row {
-  display: grid;
-  grid-template-columns: var(--content-gutter-width) minmax(0, 1fr);
-  align-items: start;
-  min-height: var(--content-line-height);
+  display: block;
+  height: var(--content-line-height);
 }
 
 .line-marker {
+  display: block;
   box-sizing: border-box;
-  min-height: var(--content-line-height);
+  width: 100%;
+  height: var(--content-line-height);
   padding-right: 18px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  line-height: var(--content-line-height);
 }
 
-.line-marker-text {
-  min-height: var(--content-line-height);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+/* 隐藏镜像层：与 textarea 共享字体/宽度/软换行规则，用于测量视觉行数 */
+.content-mirror {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(100% - var(--content-gutter-width) - var(--content-editor-padding-right));
+  padding-top: var(--content-editor-padding-y);
+  padding-bottom: var(--content-editor-padding-y);
   visibility: hidden;
+  pointer-events: none;
+  z-index: -1;
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  font-size: var(--content-font-size);
+  line-height: var(--content-line-height);
 }
 
-.line-marker-row--blank .line-marker-text {
-  white-space: pre;
+.mirror-line {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-all;
+  min-height: var(--content-line-height);
 }
 
 .content-textarea {
@@ -929,6 +1001,12 @@ defineExpose({
 
 .content-textarea::selection {
   background: rgba(22, 163, 156, 0.22);
+}
+
+/* 展示态：只读，光标与背景微调 */
+.content-textarea:read-only {
+  cursor: default;
+  background: color-mix(in srgb, var(--bg-secondary) 30%, transparent);
 }
 
 .content-textarea::-webkit-scrollbar {

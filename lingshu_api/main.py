@@ -31,6 +31,19 @@ DEFAULT_DB_PATH = _project_root / "data" / "bookstore_demo.db"
 
 def create_app(db_path: Path | None = None) -> FastAPI:
     """创建并配置 FastAPI 应用。"""
+    # 配置日志：让 novel_app 和 lingshu_api 的 INFO 级别日志输出到 stdout
+    # 解决 run_aimd_pool 的进度日志被静默丢弃的问题
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        stream=sys.stdout,
+        force=True,
+    )
+    # 显式设置 novel_app 和 lingshu_api 的 logger 级别为 INFO
+    for name in ("novel_app", "lingshu_api"):
+        lg = logging.getLogger(name)
+        lg.setLevel(logging.INFO)
+
     from lingshu_api.dependencies import set_cloud_store, set_store, set_sync_service
     from lingshu_api.routers import admin, admin_auth, auth, bookshelf, bookstore, workspace
     from lingshu_api.services.book_sync import BookSyncService
@@ -63,7 +76,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     # lifespan 替代已废弃的 on_event
     @asynccontextmanager
     async def lifespan(application: FastAPI):
-        # startup: 启动 WebSocket 心跳 + 清理过期管理员 Token
+        # startup: 启动 WebSocket 心跳 + 清理过期管理员 Token + WAL checkpoint
         from lingshu_api.ws.connection import get_ws_manager
         ping_task = asyncio.create_task(get_ws_manager().ping_loop())
         try:
@@ -71,11 +84,27 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             cleanup_on_startup(_get_db_path(store))
         except Exception:
             pass
+        # 启动时执行 WAL checkpoint，清理上次运行遗留的 WAL 数据
+        try:
+            workspace_provider.get().db.connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception:
+            pass
+        # 定期 WAL checkpoint，防止 WAL 膨胀拖慢写入操作
+        async def _wal_checkpoint_loop():
+            while True:
+                await asyncio.sleep(300)  # 每 5 分钟执行一次
+                try:
+                    workspace_provider.get().db.connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                except Exception:
+                    pass
+        wal_task = asyncio.create_task(_wal_checkpoint_loop())
         yield
-        # shutdown: 取消心跳任务
+        # shutdown: 取消后台任务
         ping_task.cancel()
+        wal_task.cancel()
         with suppress(asyncio.CancelledError):
             await ping_task
+            await wal_task
         workspace_provider.close()
 
     _disable_docs = os.environ.get("DISABLE_API_DOCS", "true").lower() in ("true", "1", "yes")

@@ -16,13 +16,19 @@
     <div
       v-if="groupedSkills.length"
       class="skills-list"
+      role="list"
+      aria-label="Skills 列表"
     >
       <div
         v-for="item in groupedSkills"
         :key="item.id"
         class="skill-item"
         :class="{ 'skill-item--active': selectedId === item.id }"
+        role="listitem"
+        tabindex="0"
+        :aria-current="selectedId === item.id ? 'true' : undefined"
         @click="onSelect(item)"
+        @keydown.enter.prevent="onSelect(item)"
       >
         <el-tag
           :type="scopeType(item.scope)"

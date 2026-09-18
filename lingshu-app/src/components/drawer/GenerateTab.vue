@@ -123,12 +123,17 @@
             class="gen-count"
           >{{ snapshots.length }}</span>
         </div>
-        <div class="snapshots-list">
+        <div
+          class="snapshots-list"
+          role="list"
+          aria-label="生成快照列表"
+        >
           <div
             v-for="snap in snapshots"
             :key="snap.id"
             class="snap-card"
             :class="[`snap-card--${snap.status}`, { 'snap-card--highlight': snap.id === highlightId }]"
+            role="listitem"
           >
             <div
               class="snap-card-head"

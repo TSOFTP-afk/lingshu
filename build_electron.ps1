@@ -443,6 +443,44 @@ $unpackedDir = Join-Path $releaseDir "win-unpacked"
 $unpackedExe = Join-Path $unpackedDir "LingShu.exe"
 
 if (Test-Path -LiteralPath $unpackedExe) {
+    # 关键修复：electron-builder 的 extraResources 可能因签名/路径问题丢失文件，
+    # 手动覆盖复制 Python 运行时和后端代码，确保完整性。
+    $unpackResources = "$unpackedDir\resources"
+    $unpackPython = "$unpackResources\python"
+    $unpackBackend = "$unpackResources\backend"
+    $pythonSourceDir = "$releaseDir\electron-python\python"
+
+    if (Test-Path -LiteralPath $pythonSourceDir) {
+        $srcSize = [Math]::Round(((Get-ChildItem -LiteralPath $pythonSourceDir -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB, 1)
+        Write-Host "  Copying Python runtime ($srcSize MB) -> resources/python ..." -ForegroundColor DarkGray
+        if (Test-Path -LiteralPath $unpackPython) {
+            Remove-Item -LiteralPath $unpackPython -Recurse -Force
+        }
+        Copy-DirectoryFast $pythonSourceDir $unpackPython @("__pycache__")
+        Write-Host "  OK: Python runtime copied" -ForegroundColor Green
+    }
+
+    # 同样确保 backend 目录完整
+    $backendSourceDir = "$projectRoot\lingshu_api"
+    if (Test-Path -LiteralPath $backendSourceDir) {
+        Write-Host "  Refreshing backend (lingshu_api) ..." -ForegroundColor DarkGray
+        $backendApiTarget = "$unpackBackend\lingshu_api"
+        if (Test-Path -LiteralPath $backendApiTarget) {
+            Remove-Item -LiteralPath $backendApiTarget -Recurse -Force
+        }
+        Copy-DirectoryFast $backendSourceDir $backendApiTarget @("__pycache__")
+    }
+    $novelAppSourceDir = "$projectRoot\novel_app"
+    if (Test-Path -LiteralPath $novelAppSourceDir) {
+        Write-Host "  Refreshing backend (novel_app) ..." -ForegroundColor DarkGray
+        $novelAppTarget = "$unpackBackend\novel_app"
+        if (Test-Path -LiteralPath $novelAppTarget) {
+            Remove-Item -LiteralPath $novelAppTarget -Recurse -Force
+        }
+        Copy-DirectoryFast $novelAppSourceDir $novelAppTarget @("__pycache__")
+    }
+    Write-Host "  OK: backend refreshed" -ForegroundColor Green
+
     if (Test-Path -LiteralPath $appDirOutput) {
         $resolvedAppDir = (Resolve-Path -LiteralPath $appDirOutput).Path
         $resolvedReleaseDir = (Resolve-Path -LiteralPath $releaseDir).Path

@@ -80,6 +80,9 @@
       <div
         ref="msgContainer"
         class="chat-messages"
+        role="log"
+        aria-live="polite"
+        aria-label="对话消息记录"
       >
         <el-empty
           v-if="!messages.length && !streaming"

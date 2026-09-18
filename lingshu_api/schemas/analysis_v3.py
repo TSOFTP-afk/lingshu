@@ -60,14 +60,14 @@ class AnalysisV3RunItem(BaseModel):
 class EntityMergeRequest(BaseModel):
     target_entity_uid: str = Field(min_length=1)
     source_entity_uids: list[str] = Field(min_length=1)
-    canonical_name: str = ""
+    canonical_name: str = Field(default="", max_length=200)
     aliases: list[str] = Field(default_factory=list)
     summary: str = ""
     reason: str = "manual entity merge"
 
 
 class EntityUpdateRequest(BaseModel):
-    canonical_name: str | None = None
+    canonical_name: str | None = Field(default=None, max_length=200)
     status: Literal["candidate", "accepted", "rejected", "superseded", "reviewed"] | None = None
     summary: str | None = None
     aliases: list[str] | None = None
@@ -75,7 +75,7 @@ class EntityUpdateRequest(BaseModel):
 
 
 class EntitySplitRequest(BaseModel):
-    canonical_name: str = Field(min_length=1)
+    canonical_name: str = Field(min_length=1, max_length=200)
     aliases: list[str] = Field(default_factory=list)
     mention_uids: list[str] = Field(default_factory=list)
     fact_uids: list[str] = Field(default_factory=list)

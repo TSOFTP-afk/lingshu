@@ -80,24 +80,28 @@
                 @reorder="onVolumeChapterReorder"
               />
 
-              <!-- 章节内容编辑器 -->
-              <ContentEditor
-                v-else-if="activeLayerKind === 'chapter' && activeChapterContent !== null"
-                :key="bookStore.activeChapterId"
-                ref="contentEditorRef"
-                :chapter-id="bookStore.activeChapterId"
-                :content="activeChapterContent"
-                :title="activeChapterTitle"
-                :dirty="activeChapterDirty"
-                :show-actionbar="false"
-                :ai-probability="activeChapterAiProbability"
-                :ai-probability-level="activeChapterAiProbabilityLevel"
-                @update:content="onActiveChapterContentInput"
-                @change="onChapterContentChange"
-                @save="onSaveChapter"
-                @revert="onRevertChapter"
-                @detect-ai="onDetectAiProbability"
-              />
+              <!-- 章节内容编辑器（展示态） -->
+              <template v-else-if="activeLayerKind === 'chapter' && activeChapterContent !== null">
+                <FloatingChapterToolbar />
+                <ContentEditor
+                  :key="bookStore.activeChapterId"
+                  ref="contentEditorRef"
+                  :chapter-id="bookStore.activeChapterId"
+                  :content="activeChapterContent"
+                  :title="activeChapterTitle"
+                  :dirty="activeChapterDirty"
+                  :show-actionbar="false"
+                  :readonly="true"
+                  :ai-probability="activeChapterAiProbability"
+                  :ai-probability-level="activeChapterAiProbabilityLevel"
+                  @update:content="onActiveChapterContentInput"
+                  @change="onChapterContentChange"
+                  @save="onSaveChapter"
+                  @revert="onRevertChapter"
+                  @detect-ai="onDetectAiProbability"
+                  @edit="openChapterEditDialog"
+                />
+              </template>
 
               <!-- 空书籍状态 -->
               <EditorPlaceholder
@@ -132,6 +136,22 @@
       @created="onBookCreated"
       @imported="onFileImported"
     />
+
+    <!-- 全屏编辑对话框 -->
+    <ChapterEditDialog
+      v-model="showChapterEditDialog"
+      :chapter-id="bookStore.activeChapterId"
+      :content="activeChapterContent"
+      :title="activeChapterTitle"
+      :dirty="activeChapterDirty"
+      :ai-probability="activeChapterAiProbability"
+      :ai-probability-level="activeChapterAiProbabilityLevel"
+      @update:content="onActiveChapterContentInput"
+      @change="onChapterContentChange"
+      @save="onSaveChapter"
+      @revert="onRevertChapter"
+      @detect-ai="onDetectAiProbability"
+    />
   </div>
 </template>
 
@@ -147,12 +167,14 @@ import { useAuthStore } from '../../stores/auth';
 import LibraryPanel from './LibraryPanel.vue';
 import ChapterTabBar from './ChapterTabBar.vue';
 import ContentEditor from './ContentEditor.vue';
+import FloatingChapterToolbar from './FloatingChapterToolbar.vue';
 import OutlineEditor from './OutlineEditor.vue';
 import WelcomePanel from './WelcomePanel.vue';
 import VolumeWorkspace from './VolumeWorkspace.vue';
 import EditorPlaceholder from './EditorPlaceholder.vue';
 import DrawerPanel from '../drawer/DrawerPanel.vue';
 import BookEntryDialog from '../dialogs/BookEntryDialog.vue';
+import ChapterEditDialog from './ChapterEditDialog.vue';
 import api from '../../utils/api';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
@@ -171,6 +193,7 @@ const centerSize = ref(initialPaneSizes.center);
 const rightSize = ref(initialPaneSizes.right);
 
 const showBookEntry = ref(false);
+const showChapterEditDialog = ref(false);
 const bookEntryMode = ref('create');
 
 const activeLayerKind = computed(() => bookStore.activeTab?.kind || 'idle');
@@ -745,6 +768,12 @@ function onChapterToolbarAction(event) {
   else if (action === 'copy') invokeContentEditor('copyChapter');
   else if (action === 'correction') invokeContentEditor('openCorrection');
   else if (action === 'search') invokeContentEditor('openSearch');
+  else if (action === 'edit') openChapterEditDialog();
+}
+
+function openChapterEditDialog() {
+  if (activeLayerKind.value !== 'chapter' || !bookStore.activeChapterId) return;
+  showChapterEditDialog.value = true;
 }
 
 function onChapterContentChange(value) {
@@ -908,5 +937,7 @@ function clamp(value, min, max) {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 </style>

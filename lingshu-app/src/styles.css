@@ -39,10 +39,21 @@
   --font-size-lg: 16px;
   --font-size-xl: 18px;
 
-  --header-height: 48px;
+  --header-height: 44px;
   --statusbar-height: 28px;
   --editor-font-size: 15px;
   --editor-line-height: 24px;
+
+  /* 应用外壳布局 token */
+  --sidenav-width: 220px;
+  --sidenav-collapsed-width: 56px;
+  --floating-toolbar-height: 40px;
+  --app-shell-gap: 0;
+
+  /* 响应式断点约定（媒体查询仍硬编码，此处仅作文档） */
+  --bp-desktop: 1440px;
+  --bp-laptop: 1024px;
+  --bp-tablet: 768px;
 
   --transition-fast: 0.15s ease;
   --transition-normal: 0.25s ease;
@@ -135,6 +146,19 @@ html, body {
 a {
   color: var(--color-primary);
   text-decoration: none;
+}
+
+/* 屏幕阅读器专用：视觉隐藏但可被辅助技术读取 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 ::-webkit-scrollbar {
