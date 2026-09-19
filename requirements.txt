@@ -8,7 +8,7 @@ websockets>=12,<17
 python-multipart>=0.0.9,<0.1
 python-docx==1.1.2
 bcrypt>=4,<6
-cryptography>=43,<45
+cryptography>=50,<51  # >=50 修复 PYSEC-2026-2141/35/3552/3553/3554 与 GHSA-537c-gmf6-5ccf（pip-audit 2026-09）
 slowapi>=0.1,<0.2
 httpx>=0.27,<0.29
 
