@@ -191,52 +191,32 @@ def test_server_key_fallback_opt_in(client, ai_env):
 
 @pytest.fixture()
 def posix_no_keyring(monkeypatch):
-    """模拟 Linux/无 keyring 环境。
+    """模拟 Linux/无 keyring 环境（仅替换 secure_storage 的平台判定单点）。
 
-    返回补丁窗口的上下文管理器工厂：os.name 全局补丁若在窗口内遇到
-    断言失败，pytest 的失败报告格式化会先于 monkeypatch 恢复执行，
-    在 Windows 上踩中 PosixPath 地雷（INTERNALERROR 吞掉真实失败，
-    3.11 矩阵实测）。因此所有断言必须在补丁窗口外进行。
+    历史教训：此前直接全局补丁 os.name="posix"，pathlib 的路径类按 os.name
+    派发，窗口内所有 Path() 会构造出"假 PosixPath"，在 Windows 上于 3.11
+    触发 NotImplementedError（pytest 报告格式化阶段先于 monkeypatch 恢复，
+    曾把真实失败炸成 INTERNALERROR）。改为单点替换 _is_windows 后可正常
+    在窗口内断言。
     """
-    import contextlib
-
-    @contextlib.contextmanager
-    def _patched():
-        with monkeypatch.context() as m:
-            m.setattr(os, "name", "posix")
-            m.setattr("novel_app.secure_storage._store_keyring_secret", lambda secret: "")
-            yield
-
-    return _patched
+    monkeypatch.setattr("novel_app.secure_storage._is_windows", lambda: False)
+    monkeypatch.setattr("novel_app.secure_storage._store_keyring_secret", lambda secret: "")
 
 
 def test_protect_secret_rejects_plaintext_without_master_key(ai_env, posix_no_keyring):
-    outcome = {}
-    with posix_no_keyring():
-        try:
-            protect_secret("sk-my-plain-api-key")
-        except Exception as exc:  # 断言在补丁窗口外进行（见 posix_no_keyring docstring）
-            outcome["error"] = exc
-    assert outcome.get("error") is not None, "无 master key 时应拒绝明文保存"
-    message = str(outcome["error"])
+    with pytest.raises(RuntimeError) as exc_info:
+        protect_secret("sk-my-plain-api-key")
+    message = str(exc_info.value)
     assert "LINGSHU_MASTER_KEY" in message, "异常信息应指明如何配置 LINGSHU_MASTER_KEY"
     assert "sk-my-plain-api-key" not in message
 
 
 def test_fernet_roundtrip_with_master_key(ai_env, posix_no_keyring):
     ai_env.setenv("LINGSHU_MASTER_KEY", "unit-test-master-key")
-    outcome = {}
-    with posix_no_keyring():
-        try:
-            sealed = protect_secret("sk-my-plain-api-key")
-            outcome["sealed"] = sealed
-            outcome["roundtrip"] = unprotect_secret(sealed)
-        except Exception as exc:  # 断言在补丁窗口外进行
-            outcome["error"] = exc
-    assert "error" not in outcome, f"补丁窗口内失败: {outcome.get('error')!r}"
-    assert outcome["sealed"].startswith("fernet:")
-    assert "sk-my-plain-api-key" not in outcome["sealed"]
-    assert outcome["roundtrip"] == "sk-my-plain-api-key"
+    sealed = protect_secret("sk-my-plain-api-key")
+    assert sealed.startswith("fernet:")
+    assert "sk-my-plain-api-key" not in sealed
+    assert unprotect_secret(sealed) == "sk-my-plain-api-key"
 
 
 def test_saved_profile_not_plaintext_in_db(tmp_path, ai_env, posix_no_keyring, monkeypatch):
@@ -246,19 +226,11 @@ def test_saved_profile_not_plaintext_in_db(tmp_path, ai_env, posix_no_keyring, m
     monkeypatch.setenv("SIMPLE_AI_NOVEL_DATA_DIR", str(tmp_path))
     BookstoreStore(db_path)  # 初始化表结构
 
-    outcome = {}
-    with posix_no_keyring():
-        try:
-            save_ai_settings(
-                tmp_path,
-                {"profiles": {"writing": {"remote_enabled": True, "api_key": "sk-user-plain-key", "model": "m"}}},
-                user_id=1,
-            )
-            outcome["loaded"] = load_ai_settings(tmp_path, reveal_secrets=True, user_id=1)
-        except Exception as exc:  # 断言在补丁窗口外进行
-            outcome["error"] = exc
-
-    assert "error" not in outcome, f"补丁窗口内失败: {outcome.get('error')!r}"
+    save_ai_settings(
+        tmp_path,
+        {"profiles": {"writing": {"remote_enabled": True, "api_key": "sk-user-plain-key", "model": "m"}}},
+        user_id=1,
+    )
 
     with sqlite3.connect(str(db_path)) as conn:
         rows = conn.execute(
@@ -269,4 +241,5 @@ def test_saved_profile_not_plaintext_in_db(tmp_path, ai_env, posix_no_keyring, m
     assert "sk-user-plain-key" not in raw, "API Key 不得明文写入数据库"
     assert "fernet:" in raw
 
-    assert outcome["loaded"]["profiles"]["writing"]["api_key"] == "sk-user-plain-key"
+    loaded = load_ai_settings(tmp_path, reveal_secrets=True, user_id=1)
+    assert loaded["profiles"]["writing"]["api_key"] == "sk-user-plain-key"

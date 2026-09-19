@@ -665,16 +665,11 @@ class TestSecureStorage(unittest.TestCase):
                 return cls.values.get((service, key))
 
         outcome = {}
-        with patch("novel_app.secure_storage.os.name", "posix"), patch.dict(sys.modules, {"keyring": FakeKeyring}), patch.dict(os.environ, {"LINGSHU_MASTER_KEY": ""}):
-            try:
-                protected = protect_secret("sk-keyring-test")
-                outcome["protected"] = protected
-                outcome["roundtrip"] = unprotect_secret(protected)
-            except Exception as exc:  # 断言在补丁窗口外进行，防 PosixPath 报告地雷
-                outcome["error"] = exc
-        self.assertNotIn("error", outcome, f"补丁窗口内失败: {outcome.get('error')!r}")
-        self.assertTrue(outcome["protected"].startswith(KEYRING_PREFIX))
-        self.assertEqual(outcome["roundtrip"], "sk-keyring-test")
+        # 平台判定走单点替换（严禁全局补丁 os.name——PosixPath 报告地雷，见 secure_storage._is_windows）
+        with patch("novel_app.secure_storage._is_windows", lambda: False), patch.dict(sys.modules, {"keyring": FakeKeyring}), patch.dict(os.environ, {"LINGSHU_MASTER_KEY": ""}):
+            protected = protect_secret("sk-keyring-test")
+            self.assertTrue(protected.startswith(KEYRING_PREFIX))
+            self.assertEqual(unprotect_secret(protected), "sk-keyring-test")
 
 
 class TestPackagingScripts(unittest.TestCase):

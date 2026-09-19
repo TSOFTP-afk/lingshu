@@ -38,10 +38,21 @@ def _fernet_from_master_key():
     return Fernet(key)
 
 
+def _is_windows() -> bool:
+    """平台判定单点。
+
+    独立成函数是为了可测试性：测试模拟 Linux 分支时替换本函数即可，
+    严禁全局补丁 os.name——pathlib 的路径类按 os.name 派发，全局补丁会让
+    窗口内所有 Path() 构造出"假 PosixPath"，在 Windows 上引发
+    NotImplementedError 并把 pytest 的失败报告炸成 INTERNALERROR。
+    """
+    return os.name == "nt"
+
+
 def protect_secret(secret: str) -> str:
     if not secret:
         return ""
-    if os.name == "nt":
+    if _is_windows():
         return f"{DPAPI_PREFIX}{base64.b64encode(_crypt_protect(secret.encode('utf-8'), _app_entropy())).decode('ascii')}"
     # Linux/macOS：master key Fernet 加密优先（docker 部署确定性最高），其次 keyring；
     # 两者都不可用时抛出明确异常，绝不将密钥明文写入数据库。
@@ -72,7 +83,7 @@ def unprotect_secret(value: str) -> str:
         return _load_keyring_secret(value[len(KEYRING_PREFIX) :])
     if not value.startswith(DPAPI_PREFIX):
         return value
-    if os.name != "nt":
+    if not _is_windows():
         logger.warning("DPAPI is only available on Windows, cannot decrypt secret")
         return ""
     payload = base64.b64decode(value[len(DPAPI_PREFIX) :].encode("ascii"))
