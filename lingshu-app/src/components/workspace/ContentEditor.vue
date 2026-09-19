@@ -272,6 +272,9 @@
 </template>
 
 <script setup>
+// 结构：本组件只保留编辑内核（内容双向同步/虚拟行号层/选区与查找替换）；
+// AI 润色 → composables/editor/useEditorAiPolish，AI 概率标注 → useEditorAiProbability，
+// 写作探针 8 秒防抖轮询 → useEditorProbePolling。共享状态（props/localContent/textareaRef/selectRange）由组件传入。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
@@ -285,12 +288,12 @@ import {
   Search,
 } from '@element-plus/icons-vue';
 import { useEventBus } from '../../composables/useEventBus';
-import api from '../../utils/api';
 import { useAuthStore } from '../../stores/auth';
-import { useBookStore } from '../../stores/book';
+import { useEditorAiPolish } from '../../composables/editor/useEditorAiPolish';
+import { useEditorAiProbability } from '../../composables/editor/useEditorAiProbability';
+import { useEditorProbePolling } from '../../composables/editor/useEditorProbePolling';
 
 const auth = useAuthStore();
-const bookStore = useBookStore();
 const { on, off, emit: busEmit } = useEventBus();
 
 const props = defineProps({
@@ -311,17 +314,25 @@ const applyingExternalContent = ref(false);
 const textareaRef = ref(null);
 const nativeEditorRef = ref(null);
 const mirrorRef = ref(null);
-const polishDialogVisible = ref(false);
-const polishLoading = ref(false);
-const polishOriginal = ref('');
-const polishResult = ref('');
-const polishRange = ref({ start: 0, end: 0 });
 
-// 写作探针伴随：8 秒防抖触发后台扫描
-const PROBE_DEFAULT_INTERVAL_MS = 8000;
-const probeTimer = ref(null);
-const probeIntervalMs = ref(PROBE_DEFAULT_INTERVAL_MS);
-const probeConfigLoaded = ref(false);
+// AI 域（润色/概率标注/探针轮询）：共享状态以 ctx 单一数据源传入，模板引用名不变
+const {
+  polishDialogVisible,
+  polishLoading,
+  polishResult,
+  polishDiff,
+  onPolish,
+  requestPolishSelection,
+  applyPolishResult,
+} = useEditorAiPolish({
+  props,
+  localContent,
+  textareaRef,
+  selectRange,
+  auth,
+});
+const { aiProbabilityText, aiProbabilityClass } = useEditorAiProbability({ props });
+const { scheduleProbeScan } = useEditorProbePolling({ props });
 
 // 行号层跟随 textarea 滚动（transform: translateY）
 const VIRTUAL_LINE_HEIGHT = 24; // 与 --content-line-height 默认值一致
@@ -347,67 +358,6 @@ watch(localContent, (val) => {
   nextTick(syncMarkerScroll);
   scheduleProbeScan();
 });
-
-// 章节切换时清空探针定时器，避免旧章节的扫描覆盖新章节
-watch(() => props.chapterId, () => {
-  clearProbeTimer();
-});
-
-function clearProbeTimer() {
-  if (probeTimer.value) {
-    clearTimeout(probeTimer.value);
-    probeTimer.value = null;
-  }
-}
-
-function scheduleProbeScan() {
-  if (!props.chapterId || !bookStore.currentBookId) return;
-  if (probeIntervalMs.value <= 0) return; // 探针未启用
-  clearProbeTimer();
-  probeTimer.value = setTimeout(() => {
-    probeTimer.value = null;
-    triggerProbeScan();
-  }, probeIntervalMs.value);
-}
-
-async function triggerProbeScan() {
-  const bookId = bookStore.currentBookId;
-  const chapterId = props.chapterId;
-  if (!bookId || !chapterId) return;
-  try {
-    const { data } = await api.post(
-      `/workspace/books/${bookId}/chapters/${chapterId}/writing-probe`,
-    );
-    // 仅当本次扫描产生新草稿时通知 ProbeTab 刷新
-    const newChars = data?.character_drafts?.length || 0;
-    const newSummary = !!data?.summary_draft;
-    if (newChars > 0 || newSummary) {
-      busEmit('lingshu:probe-scan-completed', { book_id: bookId, chapter_id: chapterId });
-    }
-  } catch (e) {
-    // 静默失败：探针未启用（403）、未登录（401）等不打扰用户写作
-  }
-}
-
-async function loadProbeConfig() {
-  if (probeConfigLoaded.value) return;
-  probeConfigLoaded.value = true;
-  try {
-    const { data } = await api.get('/settings/ai');
-    const probe = data?.profiles?.writing_probe;
-    if (probe) {
-      if (probe.interval_seconds && probe.interval_seconds >= 5) {
-        probeIntervalMs.value = probe.interval_seconds * 1000;
-      }
-      // 探针未启用时禁用自动扫描
-      if (probe.probe_enabled === false) {
-        probeIntervalMs.value = 0;
-      }
-    }
-  } catch (e) {
-    // 配置加载失败时使用默认 8 秒间隔
-  }
-}
 
 const editorLines = computed(() => (localContent.value || '').split('\n'));
 const totalLineCount = computed(() => editorLines.value.length);
@@ -457,19 +407,6 @@ const wordCount = computed(() => {
 
 const outlineWordCount = computed(() => 0);
 const hasContent = computed(() => Boolean((localContent.value || '').trim()));
-const polishDiff = computed(() => buildInlineDiff(polishOriginal.value, polishResult.value));
-const hasAiProbability = computed(() => props.aiProbabilityLevel !== 'none' || Number(props.aiProbability) > 0);
-const aiProbabilityText = computed(() => {
-  if (!hasAiProbability.value) return '未进行AI检测';
-  return `AI检测 ${normalizedAiProbability.value}%`;
-});
-const normalizedAiProbability = computed(() => Math.max(0, Math.min(100, Number(props.aiProbability) || 0)));
-const aiProbabilityClass = computed(() => {
-  if (!hasAiProbability.value) return 'ai-probability--unknown';
-  if (normalizedAiProbability.value > 80) return 'ai-probability--danger';
-  if (normalizedAiProbability.value >= 30) return 'ai-probability--warning';
-  return 'ai-probability--success';
-});
 
 function onEditorKeydown(event) {
   const key = event.key.toLowerCase();
@@ -482,125 +419,6 @@ function onEditorKeydown(event) {
     event.preventDefault();
     openSearch();
   }
-}
-
-async function onPolish() {
-  if (!auth.requireAiAccess()) return;
-  if (!props.chapterId) {
-    ElMessage.warning('请先打开一个章节');
-    return;
-  }
-  const selection = getSelectedRange();
-  if (!selection || !selection.text.trim()) {
-    ElMessage.warning('请先选中需要润色的正文');
-    return;
-  }
-  polishOriginal.value = selection.text;
-  polishResult.value = '';
-  polishRange.value = { start: selection.start, end: selection.end };
-  polishDialogVisible.value = true;
-  await requestPolishSelection();
-}
-
-async function requestPolishSelection() {
-  if (!props.chapterId || !polishOriginal.value.trim()) return;
-  polishLoading.value = true;
-  polishResult.value = '';
-  try {
-    const { data } = await api.post(`/workspace/chapters/${props.chapterId}/polish-selection`, {
-      text: polishOriginal.value,
-    });
-    polishResult.value = String(data.polished || '').trim();
-    if (!polishResult.value) {
-      ElMessage.warning('润色结果为空');
-    }
-  } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message || '润色失败');
-  } finally {
-    polishLoading.value = false;
-  }
-}
-
-function applyPolishResult() {
-  if (!polishResult.value) return;
-  const { start, end } = polishRange.value;
-  const currentSelection = localContent.value.slice(start, end);
-  if (currentSelection !== polishOriginal.value) {
-    ElMessage.warning('正文已发生变化，请重新选中文本后润色');
-    polishDialogVisible.value = false;
-    return;
-  }
-  localContent.value = `${localContent.value.slice(0, start)}${polishResult.value}${localContent.value.slice(end)}`;
-  polishDialogVisible.value = false;
-  nextTick(() => selectRange(start, start + polishResult.value.length));
-  ElMessage.success('已应用润色结果');
-}
-
-function getSelectedRange() {
-  const textarea = textareaRef.value;
-  if (!textarea) return null;
-  const start = Math.min(textarea.selectionStart, textarea.selectionEnd);
-  const end = Math.max(textarea.selectionStart, textarea.selectionEnd);
-  if (end <= start) return null;
-  return {
-    start,
-    end,
-    text: localContent.value.slice(start, end),
-  };
-}
-
-function buildInlineDiff(before, after) {
-  if (!after) {
-    return {
-      before: [{ text: before || '', changed: false }],
-      after: [],
-    };
-  }
-  if (before === after) {
-    return {
-      before: [{ text: before, changed: false }],
-      after: [{ text: after, changed: false }],
-    };
-  }
-
-  const beforeChars = Array.from(before || '');
-  const afterChars = Array.from(after || '');
-  let start = 0;
-  while (
-    start < beforeChars.length &&
-    start < afterChars.length &&
-    beforeChars[start] === afterChars[start]
-  ) {
-    start += 1;
-  }
-
-  let beforeEnd = beforeChars.length - 1;
-  let afterEnd = afterChars.length - 1;
-  while (
-    beforeEnd >= start &&
-    afterEnd >= start &&
-    beforeChars[beforeEnd] === afterChars[afterEnd]
-  ) {
-    beforeEnd -= 1;
-    afterEnd -= 1;
-  }
-
-  return {
-    before: compactDiffParts([
-      { text: beforeChars.slice(0, start).join(''), changed: false },
-      { text: beforeChars.slice(start, beforeEnd + 1).join(''), changed: true },
-      { text: beforeChars.slice(beforeEnd + 1).join(''), changed: false },
-    ]),
-    after: compactDiffParts([
-      { text: afterChars.slice(0, start).join(''), changed: false },
-      { text: afterChars.slice(start, afterEnd + 1).join(''), changed: true },
-      { text: afterChars.slice(afterEnd + 1).join(''), changed: false },
-    ]),
-  };
-}
-
-function compactDiffParts(parts) {
-  return parts.filter((part) => part.text);
 }
 
 async function copyChapter() {
@@ -749,13 +567,11 @@ onMounted(() => {
     });
     resizeObserver.observe(nativeEditorRef.value);
   }
-  loadProbeConfig();
 });
 
 onUnmounted(() => {
   off('lingshu:chapter-find', onChapterFind);
   off('lingshu:chapter-replace', onChapterReplace);
-  clearProbeTimer();
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
