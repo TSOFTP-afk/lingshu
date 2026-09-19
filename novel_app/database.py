@@ -4,6 +4,7 @@ import contextlib
 import os
 import sqlite3
 import sys
+import time
 from pathlib import Path
 from threading import Lock, RLock, local
 from typing import Any
@@ -177,9 +178,11 @@ class ThreadLocalConnections:
         if conn is None:
             conn = self._new_connection()
             self._local.conn = conn
+            # 无条件入册：close() 之后才首次访问的线程（如分析管线后台线程
+            # 收尾）也能被 close_all 的排空循环追上关闭，避免句柄泄漏导致
+            # Windows 下临时目录无法删除
             with self._registry_lock:
-                if not self._closed:
-                    self._all.append(conn)
+                self._all.append(conn)
         return conn
 
     def describe_pending_transactions(self) -> str:
@@ -216,12 +219,25 @@ class ThreadLocalConnections:
         return wrapper
 
     def close_all(self) -> None:
-        with self._registry_lock:
-            self._closed = True
-            for conn in self._all:
+        self._closed = True
+        # 排空循环：关闭之后仍可能有后台线程（如 V3 记忆层的 bg 线程）首次
+        # 访问 DB 并注册新连接，注册表瞬时为空不代表没有迟到者——必须等到
+        # 静默期（连续无新增）才返回，兜底时限防止真正挂死的线程拖住关闭
+        deadline = time.monotonic() + 5.0
+        last_activity = time.monotonic()
+        while time.monotonic() < deadline:
+            with self._registry_lock:
+                pending = self._all[:]
+                self._all.clear()
+            for conn in pending:
                 with contextlib.suppress(Exception):
                     conn.close()
-            self._all.clear()
+            with self._registry_lock:
+                if self._all:
+                    last_activity = time.monotonic()
+                elif time.monotonic() - last_activity >= 0.5:
+                    return
+            time.sleep(0.05)
 
 
 class Database(
