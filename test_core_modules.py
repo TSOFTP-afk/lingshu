@@ -661,29 +661,11 @@ class TestSecureStorage(unittest.TestCase):
 
 
 class TestPackagingScripts(unittest.TestCase):
-    """打包脚本关键逻辑测试"""
-
-    def test_build_script_uses_base_python_and_source_pip(self):
-        source = Path("packaging/build_first_exe_fast.ps1").read_text(encoding="utf-8-sig")
-        self.assertIn("function Resolve-PythonRuntimeRoot", source)
-        self.assertIn("sys.base_prefix or sys.prefix", source)
-        self.assertIn("$RequirementsHash", source)
-        self.assertIn("Test-RuntimeCacheMatches", source)
-        self.assertIn("& $PythonExe -m pip install", source)
-        self.assertNotIn("$PayloadPip install", source)
-
-    def test_launcher_reuses_extracted_runtime_until_payload_changes(self):
-        source = Path("packaging/Launcher.cs").read_text(encoding="utf-8")
-        self.assertIn("EnsureInstallDir", source)
-        self.assertIn("BuildPayloadStamp", source)
-        self.assertIn("NeedsExtract", source)
-        ensure_method = source.split("private static string EnsureInstallDir", 1)[1].split("private static string BuildPayloadStamp", 1)[0]
-        self.assertNotIn("DeleteDir(dir)", ensure_method)
+    """打包依赖关键约束测试（PyInstaller/Launcher.cs 等尸体已归档至 _attic/legacy-packaging/）"""
 
     def test_runtime_dependencies_exclude_dev_tools_and_unused_pyqt_addons(self):
         requirements = Path("requirements.txt").read_text(encoding="utf-8")
         dev_requirements = Path("requirements-dev.txt").read_text(encoding="utf-8")
-        spec = Path("灵枢.spec").read_text(encoding="utf-8")
         active_requirements = "\n".join(
             line for line in requirements.splitlines()
             if line.strip() and not line.lstrip().startswith("#")
@@ -700,23 +682,20 @@ class TestPackagingScripts(unittest.TestCase):
         self.assertIn("pytest>=8,<10", active_dev_requirements)
         # httpx 由 requirements.txt 统一提供（fastapi TestClient 传递依赖）
         self.assertNotIn("httpx", active_dev_requirements)
-        for dev_package in ("coverage>=7,<8", "pdoc>=16,<17", "pyinstaller>=6,<7"):
+        # pyinstaller 已随 PyInstaller 打包尸体出库（阶段2 减法），不再出现在 dev 依赖
+        self.assertNotIn("pyinstaller", active_dev_requirements)
+        for dev_package in ("coverage>=7,<8", "pdoc>=16,<17"):
             self.assertIn(dev_package, active_dev_requirements)
         self.assertNotIn("bcrypt>=4,<6", active_dev_requirements)
         self.assertNotIn("slowapi>=0.1,<1", active_dev_requirements)
         for optional_module in ("PyQt6.QtSvg", "PyQt6.QtMultimedia", "PyQt6.QtMultimediaWidgets", "PyQt6-WebEngine", "PyQt6-Charts", "PyQt6-DataVisualization"):
             self.assertNotIn(optional_module, requirements)
-            self.assertNotIn(optional_module, spec)
         pyqt6_dependency_lines = [
             line
             for line in requirements.splitlines()
             if line.strip() and not line.lstrip().startswith("#") and line.strip().startswith("PyQt6")
         ]
         self.assertEqual(pyqt6_dependency_lines, [])
-        self.assertNotIn("novel_app.qt", spec)
-        self.assertNotIn("PyQt6", spec)
-        self.assertIn("lingshu_api", spec)
-        self.assertIn("packaging/app_icon.ico", spec)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,6 @@ pytest>=8,<10
 pytest-cov>=7,<8
 coverage>=7,<8
 pdoc>=16,<17
-pyinstaller>=6,<7
 # httpx 由 requirements.txt 提供（fastapi TestClient 传递依赖，测试未直接 import）
 aiohttp>=3.9,<4
 requests>=2.31,<3

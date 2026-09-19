@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import axios from 'axios';
-import { hashPasswordClient } from '../utils/crypto';
 
 interface AuthUser {
   id: number;
@@ -45,10 +44,9 @@ export const useAuth = defineStore('auth', () => {
   async function login(username: string, password: string) {
     loading.value = true;
     try {
-      const hashed = await hashPasswordClient(password);
       const res = await axios.post('/api/auth/login', {
         username,
-        password: hashed,
+        password,
       });
       setAuth(res.data.access_token, res.data.user);
       return true;
@@ -63,10 +61,9 @@ export const useAuth = defineStore('auth', () => {
   async function register(username: string, password: string, isAuthor: boolean = true) {
     loading.value = true;
     try {
-      const hashed = await hashPasswordClient(password);
       const res = await axios.post('/api/auth/register', {
         username,
-        password: hashed,
+        password,
         is_author: isAuthor ? 1 : 0,
       });
       setAuth(res.data.access_token, res.data.user);

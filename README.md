@@ -13,7 +13,7 @@
 - **桌面壳**：`electron/`，默认启动或连接本地 FastAPI；登录解锁 AI、同步、备份等账号能力。
 - **读者/书城端**：`web/`，面向发布、阅读、书架和作者门户。
 - **管理后台**：`cloud-admin/`，面向用户、作品、设备、同步、配额和审计管理。
-- **灵镜管理台**：`lingjing-app/`，独立 Electron 管理端，使用密钥文件 + 管理员账号双重认证。
+- **灵镜管理台**：已归档（原独立 Electron 管理端），管理能力由 `cloud-admin/` 承接。
 - **V3 分析引擎**：已落在 `novel_app/analysis/` 和 `lingshu_api/routers/analysis_v3.py`，支持语义分块、实体、事实、记忆、探针、回溯和写回门禁。
 
 ## 核心能力
@@ -69,7 +69,7 @@ V3 流程包括：
 - 普通创作路径本地优先，离线可用。
 - 账号登录是 AI 功能前置；云端能力用于账号、授权、同步、备份和设备管理。
 - 管理端 token 与普通用户 token 分离。
-- 灵镜管理台使用 `.lingshu-key` 密钥文件；请求签名使用 `timestamp + method + path`，服务端校验 `X-Client-KeyId`、`X-Client-Ts`、`X-Client-Sig`。
+- 原灵镜管理台（已归档）曾使用 `.lingshu-key` 密钥文件；请求签名使用 `timestamp + method + path`，服务端校验 `X-Client-KeyId`、`X-Client-Ts`、`X-Client-Sig`。
 - Electron `safeStorage` 不可用时拒绝明文保存敏感密钥。
 
 ## 技术栈
@@ -99,7 +99,6 @@ npm install
 npm install --prefix lingshu-app
 npm install --prefix web
 npm install --prefix cloud-admin
-npm install --prefix lingjing-app
 ```
 
 ### 2. 启动后端
@@ -160,24 +159,6 @@ $env:LINGSHU_BACKEND_HOST="127.0.0.1"
 $env:LINGSHU_BACKEND_PORT="8787"
 ```
 
-### 6. 灵镜管理台
-
-```powershell
-npm run dev --prefix lingjing-app
-```
-
-构建 renderer 冒烟：
-
-```powershell
-npm run build:renderer --prefix lingjing-app
-```
-
-完整 Electron 打包：
-
-```powershell
-npm run build --prefix lingjing-app
-```
-
 ## 常用脚本
 
 | 命令 | 说明 |
@@ -219,7 +200,6 @@ python -m pytest tests/test_admin_auth.py tests/test_bookstore_api.py tests/test
 npm run build --prefix lingshu-app
 npm run build --prefix web
 npm run build --prefix cloud-admin
-npm run build:renderer --prefix lingjing-app
 ```
 
 CI 当前覆盖：
@@ -227,7 +207,6 @@ CI 当前覆盖：
 - Windows 后端测试与 compileall。
 - Ubuntu Node 20 前端矩阵构建。
 - `lingshu-app` 会先执行 `vue-tsc --noEmit` 再 Vite build。
-- `lingjing-app` 在 CI 中执行 renderer build，完整 Electron Builder 留给发布流程。
 
 ## 环境变量
 
@@ -265,16 +244,6 @@ CI 当前覆盖：
 | `LINGSHU_DISABLE_LOCAL_BACKEND` | 设为 `1` 时不自动拉起本地后端 |
 | `LINGSHU_PYTHON` | Electron 拉起后端时使用的 Python 可执行文件 |
 
-### 灵镜管理台
-
-| 变量 | 说明 |
-| --- | --- |
-| `LINGJING_SERVER_BASE_URL` | 管理端连接的完整服务基址 |
-| `LINGJING_SERVER_PROTOCOL` | 默认 `https` |
-| `LINGJING_SERVER_HOST` | 默认 `120.27.202.2` |
-| `LINGJING_SERVER_PORT` | 可选端口 |
-| `LINGJING_DEV_API_TARGET` | Vite dev proxy 目标 |
-
 ## 主要目录
 
 ```text
@@ -287,7 +256,6 @@ CI 当前覆盖：
 ├── electron/                    灵枢 Electron 工作台壳
 ├── web/                         读者/书城前端
 ├── cloud-admin/                 云端管理后台前端
-├── lingjing-app/                灵镜 Electron 管理台
 ├── novel_app/                   核心业务、AI、数据库、RAG、分析引擎
 │   ├── analysis/                V3 分析、记忆、探针、回溯、写回
 │   ├── db/                      SQLite schema 与业务数据访问
@@ -342,12 +310,6 @@ AI WebSocket 连接必须先发送认证帧：
 
 ```powershell
 .\build_electron.ps1
-```
-
-灵镜管理台：
-
-```powershell
-npm run build --prefix lingjing-app
 ```
 
 打包时注意：

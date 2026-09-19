@@ -41,8 +41,7 @@ function splashImagePath() {
   const candidates = [
     path.join(process.resourcesPath, 'branding', 'startup.png'),
     path.join(__dirname, '..', 'branding', 'startup.png'),
-    path.resolve(__dirname, '..', 'image_1777455545955.png'),
-    path.resolve(__dirname, '..', '..', 'image_1777455545955.png'),
+    path.join(__dirname, 'assets', 'splash.png'),
   ];
   return candidates.find((candidate) => fs.existsSync(candidate)) || '';
 }

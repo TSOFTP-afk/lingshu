@@ -1,3 +1,4 @@
+# 已归档：测的是未挂载的 bookstore.app 平行应用（阶段2 减法）
 from __future__ import annotations
 
 import sqlite3

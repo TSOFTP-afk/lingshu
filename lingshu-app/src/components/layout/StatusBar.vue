@@ -26,7 +26,10 @@ const wordCount = computed(() => {
 });
 
 const aiProbability = computed(() => chapterStore.currentChapter?.ai_probability || 0);
-const totalWordCount = computed(() => 0); // TODO: 阶段 1 实现全书字数统计
+// 全书字数：章节列表接口每项自带 word_count（后端 LENGTH(content)），直接合计
+const totalWordCount = computed(
+  () => chapterStore.chapters.reduce((sum, c) => sum + (Number(c.word_count) || 0), 0)
+);
 </script>
 
 <style scoped>

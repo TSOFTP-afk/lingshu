@@ -46,8 +46,7 @@ try {
             "tests",
             "test_core_modules.py",
             "test_database_extensions.py",
-            "test_text_importer.py",
-            "test_qt_helpers.py"
+            "test_text_importer.py"
         )
     }
 

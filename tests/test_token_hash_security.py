@@ -17,7 +17,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from novel_app.bookstore import BookstoreStore, create_app
+from lingshu_api.main import create_app
+from novel_app.bookstore import BookstoreStore
 from novel_app.bookstore.models import initialize_database
 
 
@@ -33,7 +34,7 @@ def _sha256(text: str) -> str:
 @pytest.fixture()
 def client_and_store(tmp_path: Path) -> tuple[TestClient, BookstoreStore, Path]:
     db_path = tmp_path / "bookstore.db"
-    app = create_app(db_path=db_path, publish_token="test-publish-token")
+    app = create_app(db_path=db_path)
     store = BookstoreStore(db_path)
     store.create_user(USERNAME, PASSWORD, is_author=1)
     return TestClient(app), store, db_path

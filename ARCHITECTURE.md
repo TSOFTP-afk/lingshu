@@ -332,7 +332,7 @@ f:\项目\灵枢\
 │   └── src/ (13 stores + 30+ components)
 ├── electron/                     # Electron 桌面壳
 │   ├── main.js / preload.js / splash.html
-├── packaging/                    # C# 自解压启动器
+├── packaging/                    # C# 自解压启动器与图标（旧 PyInstaller 脚本已归档至 _attic/legacy-packaging/）
 ├── data/                         # 数据库与配置
 │   ├── novels.db / bookstore_demo.db
 │   ├── .password_pepper / .password_salt
@@ -2098,7 +2098,7 @@ sequenceDiagram
 | [electron/main.js](file:///f:/项目/灵枢/electron/main.js) | Electron 主进程 |
 | [electron/preload.js](file:///f:/项目/灵枢/electron/preload.js) | Electron preload |
 | [build_electron.ps1](file:///f:/项目/灵枢/build_electron.ps1) | 打包脚本 |
-| [packaging/Launcher.cs](file:///f:/项目/灵枢/packaging/Launcher.cs) | C# 自解压启动器 |
+| [packaging/ElectronSelfExtractLauncher.cs](file:///f:/项目/灵枢/packaging/ElectronSelfExtractLauncher.cs) | C# 自解压启动器（旧版 Launcher.cs 已归档至 _attic/legacy-packaging/） |
 
 ### 15.2 数据库文件清单
 

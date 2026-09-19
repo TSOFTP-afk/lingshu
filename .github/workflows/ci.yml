@@ -70,8 +70,6 @@ jobs:
             command: npm run build
           - project: cloud-admin
             command: npm run build
-          - project: lingjing-app
-            command: npm run build:renderer
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

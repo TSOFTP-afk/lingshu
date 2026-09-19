@@ -1,6 +1,5 @@
 """bookstore 子模块 — 重新导出公共 API 以保持向后兼容。"""
 
-from .app import create_app
 from .cloud_store import (
     CloudBookStore,
     _book_row,
@@ -94,8 +93,4 @@ __all__ = [
     "CloudBookStore", "_validate_cloud_table",
     "_compact_summary", "_normalize_book_tags",
     "_book_row", "_chapter_list_row", "_bookshelf_row", "_bookshelf_shelf_row",
-    # app
-    "create_app",
 ]
-
-app = create_app()
