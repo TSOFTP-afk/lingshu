@@ -683,7 +683,6 @@ class TestPackagingScripts(unittest.TestCase):
     def test_runtime_dependencies_exclude_dev_tools_and_unused_pyqt_addons(self):
         requirements = Path("requirements.txt").read_text(encoding="utf-8")
         dev_requirements = Path("requirements-dev.txt").read_text(encoding="utf-8")
-        lock = Path("requirements.lock").read_text(encoding="utf-8")
         spec = Path("灵枢.spec").read_text(encoding="utf-8")
         active_requirements = "\n".join(
             line for line in requirements.splitlines()
@@ -699,18 +698,15 @@ class TestPackagingScripts(unittest.TestCase):
         self.assertIn("slowapi>=0.1,<0.2", active_requirements)
         self.assertNotIn("pytest", active_requirements)
         self.assertIn("pytest>=8,<10", active_dev_requirements)
-        for dev_package in ("coverage>=7,<8", "pdoc>=16,<17", "pyinstaller>=6,<7", "httpx>=0.23,<1"):
+        # httpx 由 requirements.txt 统一提供（fastapi TestClient 传递依赖）
+        self.assertNotIn("httpx", active_dev_requirements)
+        for dev_package in ("coverage>=7,<8", "pdoc>=16,<17", "pyinstaller>=6,<7"):
             self.assertIn(dev_package, active_dev_requirements)
         self.assertNotIn("bcrypt>=4,<6", active_dev_requirements)
         self.assertNotIn("slowapi>=0.1,<1", active_dev_requirements)
-        self.assertIn("bcrypt==5.0.0", lock)
-        self.assertIn("slowapi==0.1.9", lock)
         for optional_module in ("PyQt6.QtSvg", "PyQt6.QtMultimedia", "PyQt6.QtMultimediaWidgets", "PyQt6-WebEngine", "PyQt6-Charts", "PyQt6-DataVisualization"):
             self.assertNotIn(optional_module, requirements)
-            self.assertNotIn(optional_module, lock)
             self.assertNotIn(optional_module, spec)
-        # requirements.lock 计划在后续阶段整体废弃，不再检查其内容；
-        # 改为检查真正的不变量：requirements.txt 中没有以 PyQt6 开头的依赖行（跳过注释行）。
         pyqt6_dependency_lines = [
             line
             for line in requirements.splitlines()

@@ -342,7 +342,7 @@ f:\项目\灵枢\
 ├── release/                      # 打包产物
 ├── main.py                       # CLI 入口
 ├── docker-compose.yml            # Redis 服务
-├── requirements.txt / requirements.lock
+├── requirements.txt / requirements-dev.txt / requirements.lock
 └── ARCHITECTURE.md               # 本文档
 ```
 

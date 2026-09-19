@@ -8,6 +8,9 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
+from novel_app.db.migrations import ensure_column as _shared_ensure_column
+from novel_app.db.migrations import ensure_schema_version, sql_identifier
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = ROOT_DIR / "data" / "bookstore_demo.db"
 DEFAULT_WEB_BASE_URL = "http://127.0.0.1:5173"
@@ -182,26 +185,14 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 
 def _sql_identifier(value: str) -> str:
-    text = str(value or "")
-    if not text or text[0].isdigit() or not all(char.isalnum() or char == "_" for char in text):
-        raise ValueError(f"Unsafe SQL identifier: {text!r}")
-    return '"' + text.replace('"', '""') + '"'
+    # 委托共享迁移工具的标识符校验（仅 ensure_column 使用），保持原签名不变
+    return sql_identifier(value)
 
 
 def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
-    try:
-        sql = (
-            "ALTER TABLE "
-            + _sql_identifier(table_name)
-            + " ADD COLUMN "
-            + _sql_identifier(column_name)
-            + " "
-            + definition
-        )
-        connection.execute(sql)
-    except sqlite3.OperationalError as exc:
-        if "duplicate column name" not in str(exc).lower():
-            raise
+    # 委托共享迁移工具：用 PRAGMA table_info 判断列存在性，
+    # 不再依赖 except OperationalError + "duplicate column name" 字符串匹配
+    _shared_ensure_column(connection, table_name, column_name, definition)
 
 
 def _normalize_web_base_url(value: str) -> str:
@@ -872,4 +863,7 @@ def initialize_database(db_path: Path = DEFAULT_DB_PATH) -> None:
             """
         )
         _ensure_cloud_tables(connection)
+        # 登记基线版本号：从此 schema 变更均有版本可查（历史建表语句不回溯改写），
+        # 未来的迁移按新版本号写入 schema_migrations
+        ensure_schema_version(connection, "bookstore-baseline-2026-09")
         connection.commit()

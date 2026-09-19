@@ -19,9 +19,11 @@ jobs:
           python-version: "3.13"
           cache: pip
       - name: Install dependencies
+        # requirements.lock 由 pip-compile 从 requirements.txt 生成（精确 pin）；
+        # dev 文件补充测试/构建工具（其版本区间与 lock pins 兼容）
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-dev.txt
+          python -m pip install -r requirements.lock -r requirements-dev.txt
       - name: Lint Python code
         run: python -m ruff check novel_app lingshu_api
       - name: Run Python regression tests
@@ -99,8 +101,9 @@ jobs:
       - name: Install pip-audit
         run: pip install pip-audit
       - name: Run pip-audit
-        # 扫描 requirements.txt 中的已知 CVE；如存在已确认误报可追加 --ignore-vuln GHSA-xxxx
-        run: pip-audit -r requirements.txt
+        # 扫描实际安装来源：lock（运行时精确 pin）+ dev 工具链；
+        # 如存在已确认误报可追加 --ignore-vuln GHSA-xxxx
+        run: pip-audit -r requirements.lock -r requirements-dev.txt
         continue-on-error: false
       # Node 依赖审计（lingshu-app）
       - name: Set up Node.js

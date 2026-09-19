@@ -4,6 +4,7 @@ import shutil
 import sqlite3
 from typing import Any
 
+from novel_app.db import migrations
 from novel_app.db.common import (
     ANALYSIS_V3_FOUNDATION_MIGRATION_ID,
     BOOK_OUTLINE_FORM_MIGRATION_ID,
@@ -584,6 +585,9 @@ class SchemaMixin:
         self._normalize_all_chapter_orders()
         # 迁移/规整调用在 with 块之外执行，会留下未决事务；连接改为线程本地后，
         # 未决事务会一直占住写锁并阻塞其他线程写入，必须显式收尾提交
+        # 登记基线版本号：从此 schema 变更均有版本可查（历史建表语句不回溯改写），
+        # 未来的迁移按新版本号写入 schema_migrations
+        migrations.ensure_schema_version(self.connection, "baseline-2026-09")
         self.connection.commit()
 
     def _reset_database_for_current_epoch(self) -> None:
@@ -1052,13 +1056,9 @@ class SchemaMixin:
         )
 
     def _ensure_column(self, table_name: str, column_name: str, definition: str) -> None:
-        try:
-            self.connection.execute(
-                f"ALTER TABLE {self._sql_identifier(table_name)} ADD COLUMN {self._sql_identifier(column_name)} {definition}"
-            )
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" not in str(e).lower():
-                raise
+        # 委托共享迁移工具：用 PRAGMA table_info 判断列存在性，
+        # 不再依赖 except OperationalError + "duplicate column name" 字符串匹配
+        migrations.ensure_column(self.connection, table_name, column_name, definition)
 
     def _apply_analysis_v3_foundation_migration(self) -> None:
         self._ensure_column("analysis_blocks", "structure_hash", "TEXT NOT NULL DEFAULT ''")
@@ -1356,14 +1356,8 @@ class SchemaMixin:
             ("identity_occupation", "TEXT NOT NULL DEFAULT ''"),
         ]
         for column_name, definition in static_attrs_columns:
-            try:
-                self.connection.execute(
-                    f"ALTER TABLE character_state_machines ADD COLUMN {self._sql_identifier(column_name)} {definition}"
-                )
-            except sqlite3.OperationalError as e:
-                # 字段已存在则跳过（幂等）
-                if "duplicate column name" not in str(e).lower():
-                    raise
+            # 列已存在则跳过（幂等，由共享迁移工具用 PRAGMA table_info 判断）
+            self._ensure_column("character_state_machines", column_name, definition)
         self.connection.execute(
             "INSERT OR IGNORE INTO app_migrations (id) VALUES (?)",
             (CHARACTER_STATE_MACHINE_STATIC_ATTRS_MIGRATION_ID,),
