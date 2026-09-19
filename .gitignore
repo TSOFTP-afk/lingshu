@@ -73,3 +73,7 @@ admin_key.enc
 .coverage
 .coverage.*
 htmlcov/
+
+# Playwright 运行产物
+test-results/
+playwright-report/
