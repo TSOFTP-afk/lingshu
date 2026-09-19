@@ -19,6 +19,46 @@
 # ============================================================
 
 services:
+  backend:
+    build: .
+    image: lingshu-backend:latest
+    container_name: lingshu-backend
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Redis 连接走 novel_app/db/redis_client.py 的标准变量；
+    # 容器网络内主机名固定为 redis（服务名）。Redis 不可用时业务自动优雅降级。
+    environment:
+      REDIS_URL: ${REDIS_URL:-}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-lingshu_dev_password}
+      # LINGSHU_* 透传：值从根目录 .env 或 compose 环境读取（留空则用代码默认值）
+      LINGSHU_MASTER_KEY: ${LINGSHU_MASTER_KEY:-}
+      LINGSHU_AI_API_KEY: ${LINGSHU_AI_API_KEY:-}
+      LINGSHU_AI_BASE_URL: ${LINGSHU_AI_BASE_URL:-}
+      LINGSHU_AI_MODEL: ${LINGSHU_AI_MODEL:-}
+      LINGSHU_ALLOW_SERVER_KEY_FALLBACK: ${LINGSHU_ALLOW_SERVER_KEY_FALLBACK:-}
+      # 需要更多 LINGSHU_* 变量时在此追加（compose 不支持通配透传）
+    ports:
+      - "8787:8787"
+    volumes:
+      # SQLite（bookstore_demo.db）落在宿主机 ./data，随容器生命周期持久
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8787/api/health', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   redis:
     image: redis:7-alpine
     container_name: lingshu-redis

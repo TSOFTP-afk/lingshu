@@ -116,7 +116,7 @@ import { computed, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useApi, type Row } from '../composables/useApi';
 
-type SectionKey = 'users' | 'devices' | 'sync' | 'quotas' | 'audits' | 'settings';
+type SectionKey = 'dashboard' | 'users' | 'devices' | 'sync' | 'quotas' | 'audits' | 'settings';
 
 const props = defineProps<{
   token: string;

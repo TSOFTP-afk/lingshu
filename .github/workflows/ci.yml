@@ -10,13 +10,19 @@ on:
 jobs:
   backend-test:
     runs-on: windows-latest
+    timeout-minutes: 45
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # pyproject 声明支持 3.11+；3.13 为当前主力版本，3.11 为兼容下限
+        python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install dependencies
         # requirements.lock 由 pip-compile 从 requirements.txt 生成（精确 pin）；
@@ -25,7 +31,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.lock -r requirements-dev.txt
       - name: Lint Python code
-        run: python -m ruff check novel_app lingshu_api
+        run: python -m ruff check lingshu_api novel_app shared tests test_core_modules.py test_database_extensions.py test_text_importer.py conftest.py main.py
       - name: Run Python regression tests
         run: python tests/test_runner.py
       - name: Compile sources
@@ -33,6 +39,7 @@ jobs:
 
   frontend-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     strategy:
@@ -40,7 +47,12 @@ jobs:
       matrix:
         include:
           - project: lingshu-app
+            test: npm run test:coverage
           - project: cloud-admin
+            test: npm run test:coverage
+          # web 无 vitest 用例，仅跑 typecheck（构建 job 中的 vite build 不再重复跑 vue-tsc）
+          - project: web
+            test: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -51,12 +63,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
         working-directory: ${{ matrix.project }}
+      - name: Typecheck ${{ matrix.project }}
+        run: npm run typecheck
+        working-directory: ${{ matrix.project }}
       - name: Run tests with coverage
-        run: npm run test:coverage
+        if: matrix.test != ''
+        run: ${{ matrix.test }}
         working-directory: ${{ matrix.project }}
 
   frontend-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     needs: frontend-test
@@ -65,11 +82,11 @@ jobs:
       matrix:
         include:
           - project: lingshu-app
-            command: npm run build
+            command: npx vite build
           - project: web
-            command: npm run build
+            command: npx vite build
           - project: cloud-admin
-            command: npm run build
+            command: npx vite build
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -87,6 +104,7 @@ jobs:
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -114,6 +132,14 @@ jobs:
       - name: npm audit (lingshu-app)
         run: npm audit --audit-level=high
         working-directory: lingshu-app
+        continue-on-error: false
+      # Node 依赖审计（web）
+      - name: Install web deps
+        run: npm ci
+        working-directory: web
+      - name: npm audit (web)
+        run: npm audit --audit-level=high
+        working-directory: web
         continue-on-error: false
       # Node 依赖审计（electron）
       - name: Install electron deps

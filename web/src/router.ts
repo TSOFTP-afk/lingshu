@@ -6,7 +6,6 @@ export const router = createRouter({
     { path: '/', name: 'home', component: () => import('./views/HomeView.vue') },
     { path: '/bookstore', name: 'bookstore', component: () => import('./views/BookstoreView.vue') },
     { path: '/shelf', name: 'bookshelf', component: () => import('./views/BookshelfView.vue'), meta: { requiresAuth: true } },
-    { path: '/create', name: 'create', component: () => import('./views/CreateView.vue'), meta: { requiresAuth: true } },
     { path: '/profile', name: 'profile', component: () => import('./views/ProfileView.vue'), meta: { requiresAuth: true } },
     { path: '/profile/books/:bookId', name: 'profile-book-detail', component: () => import('./views/ProfileView.vue'), meta: { requiresAuth: true }, props: true },
     { path: '/profile/books/:bookId/chapters', name: 'author-chapters', component: () => import('./views/AuthorChapterManageView.vue'), meta: { requiresAuth: true }, props: true },

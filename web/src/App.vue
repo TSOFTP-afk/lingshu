@@ -40,7 +40,6 @@ onMounted(() => {
           <nav class="site-nav" aria-label="主导航">
             <RouterLink class="site-nav-link" to="/">首页</RouterLink>
             <RouterLink class="site-nav-link" to="/bookstore">书库</RouterLink>
-            <RouterLink class="site-nav-link" to="/create">共创空间</RouterLink>
           </nav>
 
           <div class="site-search">

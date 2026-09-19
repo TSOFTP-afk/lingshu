@@ -27,3 +27,23 @@ python -m compileall -q main.py novel_app tests test_core_modules.py test_databa
 - 新增可被外部调用的模块时，确认 `tools/generate_api_docs.py` 可以生成文档。
 - 性能测试使用 `pytest.mark.performance`，避免拖慢默认回归。
 
+## 防复发纪律（长期有效）
+
+依据 `docs/项目抢救方案_2026-09.md` 第六节 4.4，以下规则为硬约束，违反任何一条的 PR 不予合并：
+
+1. **每天 commit，每个 feature 一个分支**。不允许再出现"几天开发只留 2 个 commit"的历史；小步提交、及时 push。
+2. **禁止新增平行实现**：
+   - 不加第二个管理端（管理界面统一在 cloud-admin）；
+   - 不加第二套 DB/Redis 连接（统一走 `novel_app/db` 与 `lingshu_api/dependencies.py`）；
+   - 不复制第二份 `ensure_column` / 迁移逻辑（共享逻辑进 `shared/` 或统一 API client）。
+3. **私货不入库**。账号、绝对路径、生产 URL、密钥一律走环境变量（`LINGSHU_*` / `REDIS_*` / `.env`）。合并前执行：
+
+   ```bash
+   grep -rn "ling-shu.top\|26455\|12345678a\|/home/CODEX" --exclude-dir=node_modules --exclude-dir=_attic .
+   ```
+
+   有命中（_attic 留档除外）就修掉再合。
+4. **设施必须被消费**。CI 每周至少真实跑一次并看一眼覆盖率报告；连续两周无人引用的文档移入 `_attic/` 留档，不留"看起来有"的假设施。
+5. **抢救期不加新功能**。`docs/项目抢救方案_2026-09.md` 路线（阶段 0–4 + E2E 十例）完成之前，所有产能给地基，不接受新功能 PR；修 bug、补测试、还技术债优先。
+
+

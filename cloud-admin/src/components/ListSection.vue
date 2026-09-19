@@ -122,7 +122,7 @@ import { Search } from '@element-plus/icons-vue';
 import { useApi, type Row } from '../composables/useApi';
 import { columnsBySection } from '../composables/useColumns';
 
-type SectionKey = 'users' | 'devices' | 'sync' | 'quotas' | 'audits' | 'settings';
+type SectionKey = 'dashboard' | 'users' | 'devices' | 'sync' | 'quotas' | 'audits' | 'settings';
 type SectionMeta = {
   key: SectionKey;
   label: string;
