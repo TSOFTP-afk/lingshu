@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from novel_app.ai.protocols import AITextAnalysisProtocol
-
 
 class TextAnalysisService:
     """独立的 AI 文本分析服务，包装 AITextAnalysisMixin 的功能

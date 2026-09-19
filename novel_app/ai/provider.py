@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 from novel_app.ai.generation_service import GenerationService
-from novel_app.ai.protocols import AIProviderProtocol
 from novel_app.ai.review_service import ReviewService
 from novel_app.ai.service import SimpleAIService
 from novel_app.ai.text_analysis_service import TextAnalysisService

@@ -6,18 +6,28 @@ import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from novel_app.core.event_bus import EventBus
+
+from novel_app.ai.service import DEFAULT_BASE_URL, SimpleAIService
 from novel_app.core import (
-    get_event_bus, subscribe, unsubscribe, publish,
-    get_state_manager, register_state_property, get_state, set_state,
-    get_service_locator, register_service, register_service_factory, get_service
+    get_event_bus,
+    get_service,
+    get_service_locator,
+    get_state,
+    get_state_manager,
+    publish,
+    register_service,
+    register_service_factory,
+    register_state_property,
+    set_state,
+    subscribe,
+    unsubscribe,
 )
+from novel_app.core.event_bus import EventBus
 from novel_app.env_utils import env_flag
 from novel_app.json_utils import extract_json_object
+from novel_app.secure_storage import DPAPI_PREFIX, KEYRING_PREFIX, protect_secret, unprotect_secret
 from novel_app.state.app_state import StateStore
 from novel_app.theme import get_design_tokens
-from novel_app.ai.service import DEFAULT_BASE_URL, SimpleAIService
-from novel_app.secure_storage import DPAPI_PREFIX, KEYRING_PREFIX, protect_secret, unprotect_secret
 
 
 class TestEventBus(unittest.TestCase):
@@ -25,7 +35,7 @@ class TestEventBus(unittest.TestCase):
 
     def test_event_subscription(self):
         """测试事件订阅和发布"""
-        event_bus = get_event_bus()
+        get_event_bus()
         received_events = []
 
         def callback(event_data):
@@ -106,7 +116,7 @@ class TestStateManager(unittest.TestCase):
 
     def test_state_management(self):
         """测试状态管理"""
-        state_manager = get_state_manager()
+        get_state_manager()
 
         # 注册状态属性
         register_state_property("test_state", "initial value")
@@ -140,7 +150,7 @@ class TestServiceLocator(unittest.TestCase):
 
     def test_service_registration(self):
         """测试服务注册和获取"""
-        service_locator = get_service_locator()
+        get_service_locator()
 
         # 定义测试服务
         class TestService:
@@ -170,7 +180,7 @@ class TestComponentRegistry(unittest.TestCase):
 
     def test_component_registration(self):
         """测试组件注册"""
-        registry = get_component_registry()
+        registry = get_component_registry()  # noqa: F821 — 旧 Tk 注册表已移除，本用例 @unittest.skip 仅留档
 
         # 定义测试组件
         from novel_app.components.base_component import BaseComponent
@@ -179,7 +189,7 @@ class TestComponentRegistry(unittest.TestCase):
                 super().__init__(parent, theme)
 
         # 注册组件
-        register_component("test_component", TestComponent)
+        register_component("test_component", TestComponent)  # noqa: F821 — 同上，用例已 skip
 
         # 验证组件已注册
         self.assertTrue(registry.has("test_component"))

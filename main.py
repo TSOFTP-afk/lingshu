@@ -15,7 +15,6 @@
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -62,7 +61,7 @@ def main() -> None:
 
     if not args.dev and check_backend_health(args.host, args.port):
         print(f"[灵枢] API 服务已在 http://{args.host}:{args.port} 运行")
-        print(f"[灵枢] 无需重复启动，按 Ctrl+C 退出")
+        print("[灵枢] 无需重复启动，按 Ctrl+C 退出")
         return
 
     start_api_server(args.host, args.port)

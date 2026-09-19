@@ -20,12 +20,12 @@ from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from novel_app.ai.service import SimpleAIService
 from novel_app.analysis.ai_provider import AIAnalysisProvider
-from novel_app.analysis.card_generators_v3 import build_v3_entity_card, _extract_static_attrs_from_facts
+from novel_app.analysis.card_generators_v3 import _extract_static_attrs_from_facts, build_v3_entity_card
 from novel_app.analysis.llm_cache import LLMCache
 from novel_app.analysis.pipeline_v3 import PIPELINE_V3_VERSION, AnalysisPipelineV3
 from novel_app.analysis.state_machine_writeback import writeback_to_state_machine
-from novel_app.ai.service import SimpleAIService
 from novel_app.database import Database
 
 SAMPLE_NOVEL_PATH = Path(__file__).resolve().parents[1] / "tools" / "sample_novel" / "镜中蝉.txt"
@@ -109,11 +109,11 @@ def run_jingzhongchan_v3_ai_test():
     log("灵枢 V3 分析管道 — 真实书籍 AI 增强模式测试（《镜中蝉》+ DeepSeek）")
     log("=" * 80)
     log(f"管道版本: {PIPELINE_V3_VERSION}")
-    log(f"测试用书: 《镜中蝉》（灵枢范例小说·民国悬疑短篇）")
+    log("测试用书: 《镜中蝉》（灵枢范例小说·民国悬疑短篇）")
     log(f"AI 模型: {DEEPSEEK_MODEL} @ {DEEPSEEK_BASE_URL}")
 
     if not DEEPSEEK_API_KEY:
-        log(f"✗ 未配置 API Key，请设置 LINGSHU_AI_API_KEY 环境变量")
+        log("✗ 未配置 API Key，请设置 LINGSHU_AI_API_KEY 环境变量")
         return
 
     # 读取原文
@@ -177,7 +177,7 @@ def run_jingzhongchan_v3_ai_test():
             log("【Step 4: 运行 V3 全链路分析（AI 增强模式 use_ai=True）】")
             log("─" * 80)
             log(f"  开始时间: {time.strftime('%H:%M:%S')}")
-            log(f"  注: AI 模式会调用 DeepSeek API，可能耗时数分钟...")
+            log("  注: AI 模式会调用 DeepSeek API，可能耗时数分钟...")
             t0 = time.time()
             pipeline = AnalysisPipelineV3(db, ai_provider=ai_provider)
             try:
@@ -189,13 +189,13 @@ def run_jingzhongchan_v3_ai_test():
                 ai_success = False
                 log(f"  ✗ AI 模式运行失败: {type(exc).__name__}: {exc}")
                 log(f"  耗时: {elapsed:.2f} 秒")
-                log(f"  尝试回退到规则引擎模式...")
+                log("  尝试回退到规则引擎模式...")
                 pipeline_rule = AnalysisPipelineV3(db)
                 book_id2 = db.create_book("镜中蝉（V3 回退测试）")
-                for idx, (title, content) in enumerate(chapters, 1):
+                for _idx, (title, content) in enumerate(chapters, 1):
                     ch_id = db.create_chapter(book_id2, title)
                     db.update_chapter(ch_id, outline="", content=content)
-                for name, desc in SEED_CHARACTERS:
+                for name, _desc in SEED_CHARACTERS:
                     db.create_character(book_id2, name)
                 result = pipeline_rule.start_run(book_id2)
                 book_id = book_id2
@@ -357,7 +357,7 @@ def run_jingzhongchan_v3_ai_test():
             log("【Step 11: 静态属性提取测试】")
             log("─" * 80)
             extracted = _extract_static_attrs_from_facts([dict(f) for f in facts])
-            log(f"  从全书 facts 提取静态属性:")
+            log("  从全书 facts 提取静态属性:")
             if not extracted:
                 log("    (空)")
             else:
@@ -404,7 +404,7 @@ def run_jingzhongchan_v3_ai_test():
             )
             payload = card.payload if hasattr(card, "payload") else {}
             wb_fields = payload.get("writeback_fields", {}) if isinstance(payload, dict) else {}
-            log(f"  build_v3_entity_card 输出:")
+            log("  build_v3_entity_card 输出:")
             if not wb_fields:
                 log("    (空)")
             else:
@@ -430,7 +430,7 @@ def run_jingzhongchan_v3_ai_test():
                 "signature_feature": sm.get("signature_feature", ""),
                 "identity_occupation": sm.get("identity_occupation", ""),
             }
-            log(f"  状态机字段:")
+            log("  状态机字段:")
             if not sm_static:
                 log("    (空)")
             else:

@@ -18,13 +18,13 @@ AI 调用失败时返回空列表，由调用方（pipeline_v3）回退到规则
 """
 from __future__ import annotations
 
-from collections import defaultdict, deque
 import concurrent.futures
 import json
 import logging
 import os
 import threading
 import time
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -308,9 +308,7 @@ def _is_rate_limit_error(exc: Exception) -> bool:
             return True
     # 检查异常消息
     msg = str(exc).lower()
-    if any(kw in msg for kw in ("rate limit", "rate_limit", "quota", "too many requests", "429", "403")):
-        return True
-    return False
+    return any(kw in msg for kw in ("rate limit", "rate_limit", "quota", "too many requests", "429", "403"))
 
 
 def _is_connection_error(exc: Exception) -> bool:
@@ -332,13 +330,11 @@ def _is_connection_error(exc: Exception) -> bool:
     if cause is not None and isinstance(cause, ConnectionError):
         return True
     msg = str(exc).lower()
-    if any(kw in msg for kw in (
+    return any(kw in msg for kw in (
         "remote end closed", "connection closed", "connection reset",
         "connection aborted", "connection refused", "broken pipe",
         "chunked encoding", "incomplete read",
-    )):
-        return True
-    return False
+    ))
 
 
 def iter_ai_text_windows(
@@ -970,8 +966,8 @@ class AIAnalysisProvider:
                 return output
             except Exception as exc:
                 last_error = exc
-                setattr(last_error, "ai_attempt", attempt)
-                setattr(last_error, "ai_error_type", self._classify_error(exc))
+                last_error.ai_attempt = attempt
+                last_error.ai_error_type = self._classify_error(exc)
                 if attempt < self.AI_MAX_ATTEMPTS:
                     retry_index = attempt  # 第 1 次失败后的重试序号为 1
                     backoff = self._compute_retry_backoff(exc, retry_index)
@@ -990,7 +986,7 @@ class AIAnalysisProvider:
                     "AI %s 调用最终失败 (attempt %d/%d): %s",
                     stage, attempt, self.AI_MAX_ATTEMPTS, str(exc)[:300],
                 )
-                raise last_error
+                raise last_error from exc
         raise RuntimeError("AI call failed without an exception")
 
     def _loads_json_object(self, content: str) -> tuple[dict[str, Any], bool]:
@@ -2053,7 +2049,7 @@ def _cross_batch_merge_entities(
         by_type.setdefault(str(entity.entity_type or ""), []).append(entity)
 
     result: list[ResolvedEntityCandidate] = []
-    for entity_type, group in by_type.items():
+    for _entity_type, group in by_type.items():
         if len(group) <= 1:
             result.extend(group)
             continue
@@ -2072,15 +2068,15 @@ def _cross_batch_merge_entities(
         parent: dict[int, int] = {i: i for i in range(len(group))}
 
         def _find(x: int) -> int:
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
+            while parent[x] != x:  # noqa: B023 — 闭包仅在同一迭代内定义并调用，parent 不会跨迭代泄漏
+                parent[x] = parent[parent[x]]  # noqa: B023 — 闭包仅在同一迭代内定义并调用，parent 不会跨迭代泄漏
+                x = parent[x]  # noqa: B023 — 闭包仅在同一迭代内定义并调用，parent 不会跨迭代泄漏
             return x
 
         def _union(a: int, b: int) -> None:
             ra, rb = _find(a), _find(b)
             if ra != rb:
-                parent[ra] = rb
+                parent[ra] = rb  # noqa: B023 — 闭包仅在同一迭代内定义并调用，parent 不会跨迭代泄漏
 
         names_list = [_all_names(e) for e in group]
         for i in range(len(group)):

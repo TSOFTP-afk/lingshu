@@ -22,15 +22,20 @@ router.include_router(steps_router)
 router.include_router(cards_router)
 
 # 重导出子模块的公共函数，供外部引用（如 analysis_v3_ws.py）
+from lingshu_api.routers.analysis_v3_cards import (  # noqa: E402, F401
+    _analysis_v3_card_item,
+    _analysis_v3_dependency_item,
+    _create_writeback_card_generator,
+)
 from lingshu_api.routers.analysis_v3_runs import (  # noqa: E402, F401
     _analysis_v3_run_item,
     _check_run_book_owner,
     _check_run_book_owner_for_book,
+    _classify_error_text,
     _create_required_analysis_ai_provider,
     _get_analysis_v3_run_or_404,
     _is_analysis_v3_run,
     _load_chapters_for_analysis,
-    _classify_error_text,
 )
 from lingshu_api.routers.analysis_v3_steps import (  # noqa: E402, F401
     _analysis_v3_backtrack_task_item,
@@ -39,9 +44,4 @@ from lingshu_api.routers.analysis_v3_steps import (  # noqa: E402, F401
     _count_rows_by,
     _row_value,
     get_analysis_v3_review_summary,
-)
-from lingshu_api.routers.analysis_v3_cards import (  # noqa: E402, F401
-    _analysis_v3_card_item,
-    _analysis_v3_dependency_item,
-    _create_writeback_card_generator,
 )

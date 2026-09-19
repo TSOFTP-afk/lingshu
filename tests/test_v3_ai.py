@@ -82,7 +82,7 @@ async def main():
         print("  AI 配置设置完成")
 
         # 3. 获取范例书籍
-        print(f"\n=== 获取范例书籍 ===")
+        print("\n=== 获取范例书籍 ===")
         async with session.get(f"{BASE}/api/workspace/books", headers=headers) as r:
             data = await r.json()
             items = data.get("items", [])
@@ -93,8 +93,8 @@ async def main():
             print(f"  book_id={book_id} title={items[0].get('title', '')[:30]}")
 
         # 4. WebSocket 运行 V3 AI 分析
-        print(f"\n=== V3 AI 分析 (use_ai=True) ===")
-        print(f"  这可能需要 10-30 分钟，请耐心等待...")
+        print("\n=== V3 AI 分析 (use_ai=True) ===")
+        print("  这可能需要 10-30 分钟，请耐心等待...")
         run_id = 0
         progress_messages = []
         try:
@@ -103,7 +103,7 @@ async def main():
             print(f"\n  分析失败: {e}")
 
         # 5. 结果汇总
-        print(f"\n=== 结果 ===")
+        print("\n=== 结果 ===")
         print(f"  run_id: {run_id}")
         print(f"  progress 消息数: {len(progress_messages)}")
         if progress_messages:
@@ -111,7 +111,7 @@ async def main():
 
         if run_id:
             # 验证分析结果
-            print(f"\n=== 验证分析结果 ===")
+            print("\n=== 验证分析结果 ===")
             for endpoint in ["blocks", "mentions", "entities", "facts", "cards", "events"]:
                 try:
                     async with session.get(f"{BASE}/api/workspace/analysis-v3/runs/{run_id}/{endpoint}", headers=headers) as r:
@@ -151,13 +151,13 @@ async def test_v3_ws(session, token, book_id, *, use_ai, timeout_sec=1800, progr
         while time.time() < deadline:
             try:
                 msg = await asyncio.wait_for(ws.receive(), timeout=10.0)
-            except asyncio.TimeoutError:
+            except TimeoutError as exc:
                 elapsed = int(time.time() - start_time)
                 since_progress = int(time.time() - last_progress_time)
                 if time.time() - last_progress_time > 300:
                     print(f"  [{elapsed}s] WARNING: 300 秒无进度更新 (last progress {since_progress}s ago)")
                 if time.time() - last_progress_time > 600:
-                    raise RuntimeError(f"V3 分析 600 秒无进度更新")
+                    raise RuntimeError("V3 分析 600 秒无进度更新") from exc
                 continue
 
             if msg.type == aiohttp.WSMsgType.TEXT:

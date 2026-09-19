@@ -2,7 +2,7 @@
 
 ## 1. 概述
 
-本目录包含运行时 E2E（端到端）测试套件，用于连接真实前后端服务器，用账号 `001` / 密码 `12345678a` 登录，执行 V3 全书分析一条龙检测（从分析到审核到写回书籍卡/人物卡/世界卡）。
+本目录包含运行时 E2E（端到端）测试套件，用于连接真实前后端服务器，用种子账号（默认 `e2e_writer` / `e2e_pass_123`，可用 env `LINGSHU_E2E_USER` / `LINGSHU_E2E_PASS` 覆盖）登录，执行 V3 全书分析一条龙检测（从分析到审核到写回书籍卡/人物卡/世界卡）。
 
 该套件会真实拉起（或复用已运行的）后端 API 服务与前端 Vite 服务，模拟用户从登录、创建书籍、写入章节、触发 V3 全书分析、等待分析完成、通过审核门禁、批量写回卡片到清理测试数据的完整流程，并在测试结束后输出 14 环节结构化检测报告。
 
@@ -10,9 +10,15 @@
 
 - Python 3.10+，已安装项目依赖（`pip install -r requirements.txt`）
 - Node.js 18+，已在 `lingshu-app/` 目录执行 `npm install`
-- 账号 `001` 已在后端数据库注册，密码为 `12345678a`，且 `is_author=1`
+- E2E 账号由种子脚本 `tools/seed_test_env.py` 创建（幂等，可重复运行）：
+  在独立数据目录（env `LINGSHU_E2E_DB`，默认 `data/e2e_seed/`，绝不碰生产 `data/novels.db`）建立
+  双库（`bookstore_demo.db` + `novels.db`）、种子账号与示例书。
+  设置 `LINGSHU_E2E_USER` / `LINGSHU_E2E_PASS` 后运行测试时若账号缺失会自动调用该脚本；也可手动执行：
+  ```bash
+  python tools/seed_test_env.py
+  ```
 - （可选）Playwright 已安装：`pip install playwright && playwright install chromium`
-- 端口 8787（后端）和 5173（前端）可用，或已被对应服务占用
+- 端口 8787（后端）和 5175（前端，Vite dev server 实际端口）可用，或已被对应服务占用
 
 ## 3. 运行方式
 
@@ -31,7 +37,7 @@ pytest tests/runtime_e2e/test_v3_full_pipeline_runtime.py -v -s
 python main.py --host 127.0.0.1 --port 8787
 
 # 终端 2：启动前端
-cd lingshu-app && npm run dev -- --host 127.0.0.1 --port 5173
+cd lingshu-app && npm run dev -- --host 127.0.0.1 --port 5175
 
 # 终端 3：运行测试
 pytest tests/runtime_e2e/test_v3_full_pipeline_runtime.py -v -s
@@ -66,7 +72,7 @@ pytest --ignore=tests/runtime_e2e
 测试结束后在 `tests/runtime_e2e/report.txt` 生成结构化报告，覆盖 14 个环节：
 
 1. 前后端服务器连接
-2. 账号 001 登录
+2. 种子账号登录
 3. 测试书籍创建
 4. 章节正文写入
 5. V3 分析触发
@@ -91,7 +97,7 @@ pytest --ignore=tests/runtime_e2e
 一条龙检测流程如下：
 
 1. 确保前后端服务器就绪（自动拉起或复用已运行）
-2. 用账号 `001` / 密码 `12345678a` 登录，获取 `access_token`
+2. 用种子账号（`e2e_writer` / `e2e_pass_123` 或 env 覆盖值）登录，获取 `access_token`
 3. 创建 `__E2E_V3__<timestamp>` 测试书籍
 4. 写入 5 章测试正文（复用 `tests/fixtures/test_novel.py`）
 5. 触发 V3 全书分析（规则模式 `use_ai=false, execute_l1=true`）
@@ -107,9 +113,9 @@ pytest --ignore=tests/runtime_e2e
 
 | 问题 | 可能原因 | 解决方案 |
 |------|---------|---------|
-| 登录失败 401 | 账号 001 未注册或密码错误 | 在后端注册账号 001，或修改 `helpers.py` 中的默认账号 |
+| 登录失败 401 | 后端数据库中无种子账号或密码不一致 | 运行 `python tools/seed_test_env.py` 重建种子库，或将后端数据目录指向 `LINGSHU_E2E_DB`（`SIMPLE_AI_NOVEL_DATA_DIR` / `BOOKSTORE_DB_PATH`） |
 | 登录失败 503 | 后端服务未就绪 | 检查后端日志 `.codex-runtime/logs/e2e_backend.err.log` |
-| 端口占用 | 8787/5173 被其他进程占用 | 终止占用进程或修改 `helpers.py` 中的端口常量 |
+| 端口占用 | 8787/5175 被其他进程占用 | 终止占用进程或修改 `helpers.py` 中的端口常量 |
 | V3 分析超时 | 测试小说内容过少或分析卡死 | 检查后端日志，适当增加 `wait_for` 超时时间 |
 | 写回门禁阻断 | 存在 pending backtrack 或 manual_review probes | 检查 `get_review` 返回的 `blockers` 列表 |
 | 前端冒烟测试跳过 | Playwright 未安装 | `pip install playwright && playwright install chromium` |
@@ -120,8 +126,13 @@ pytest --ignore=tests/runtime_e2e
 可在 `helpers.py` 顶部修改以下常量：
 
 - `BACKEND_HOST` / `BACKEND_PORT` — 后端服务地址（默认 `127.0.0.1:8787`）
-- `FRONTEND_HOST` / `FRONTEND_PORT` — 前端服务地址（默认 `127.0.0.1:5173`）
+- `FRONTEND_HOST` / `FRONTEND_PORT` — 前端服务地址（默认 `127.0.0.1:5175`）
 - `E2E_BOOK_PREFIX` — 测试书籍标题前缀（默认 `__E2E_V3__`）
+
+环境变量（推荐，不改代码）：
+
+- `LINGSHU_E2E_USER` / `LINGSHU_E2E_PASS` — E2E 账号；未设置时自动运行种子脚本并使用默认账号 `e2e_writer` / `e2e_pass_123`
+- `LINGSHU_E2E_DB` — 种子数据目录（默认 `data/e2e_seed/`，独立于生产 `data/`）
 
 ## 文件结构
 

@@ -307,11 +307,11 @@ def test_analysis_v3_run_routes_create_blocks_and_do_not_pollute_legacy_runs(cli
 
 
 def test_analysis_v3_card_writeback_allows_empty_body_and_creates_snapshot(client: TestClient, monkeypatch) -> None:
+    import lingshu_api.routers.analysis_v3 as analysis_v3_router
+    import lingshu_api.routers.analysis_v3_cards as analysis_v3_cards_router
     from novel_app.analysis import AnalysisCardDraft, AnalysisStore
     from novel_app.analysis.pipeline_v3 import PIPELINE_V3_VERSION
     from novel_app.analysis.writeback_card_generator import WritebackCardGenerationResult
-    import lingshu_api.routers.analysis_v3 as analysis_v3_router
-    import lingshu_api.routers.analysis_v3_cards as analysis_v3_cards_router
 
     class FakeWritebackGenerator:
         def __init__(self) -> None:
@@ -432,10 +432,11 @@ def test_analysis_v3_card_writeback_allows_empty_body_and_creates_snapshot(clien
 
 def test_analysis_v3_card_writeback_requires_ai_generator(client: TestClient, monkeypatch) -> None:
     from fastapi import HTTPException
-    from novel_app.analysis import AnalysisCardDraft, AnalysisStore
-    from novel_app.analysis.pipeline_v3 import PIPELINE_V3_VERSION
+
     import lingshu_api.routers.analysis_v3 as analysis_v3_router
     import lingshu_api.routers.analysis_v3_cards as analysis_v3_cards_router
+    from novel_app.analysis import AnalysisCardDraft, AnalysisStore
+    from novel_app.analysis.pipeline_v3 import PIPELINE_V3_VERSION
 
     def unavailable(_db, *, user_id=None):
         raise HTTPException(status_code=503, detail="fake generator unavailable")

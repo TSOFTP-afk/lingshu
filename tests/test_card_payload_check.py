@@ -212,7 +212,7 @@ def _print_card(row, entities):
     if summary:
         print(f"  摘要: {summary[:150]}")
     else:
-        print(f"  ⚠ 摘要为空!")
+        print("  ⚠ 摘要为空!")
 
     print(f"  关联事实数: {len(facts_list)}")
 

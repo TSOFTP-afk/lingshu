@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import concurrent.futures
+import contextlib
+import logging
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from novel_app.analysis.ai_provider import (
@@ -495,8 +496,8 @@ class PipelineV3StagesMixin:
                         if rel >= 0:
                             # 创建修正后的候选
                             try:
-                                from novel_app.analysis.schemas_v3 import EntityMentionCandidate
                                 from novel_app.analysis.entity_resolver import normalize_entity_alias
+                                from novel_app.analysis.schemas_v3 import EntityMentionCandidate
                                 updated = EntityMentionCandidate.create(
                                     book_id=book_id,
                                     run_id=run_id,
@@ -746,7 +747,6 @@ class PipelineV3StagesMixin:
         block_start = int(block.get("char_start") or 0)
         char_start = int(getattr(mention, "char_start", 0) or 0)
         char_end = int(getattr(mention, "char_end", 0) or 0)
-        quote_text = str(getattr(mention, "quote_text", "") or "")
 
         # 计算在 block 内的局部位置
         local_start = max(0, char_start - block_start)
@@ -1145,15 +1145,13 @@ class PipelineV3StagesMixin:
         except Exception as exc:
             elapsed = time.monotonic() - t_start
             logger.error("Memory layer background failed for run %s after %.1fs: %s", run_id, elapsed, exc, exc_info=True)
-            try:
+            with contextlib.suppress(Exception):
                 self.store.create_audit_log(
                     book_id, run_id=run_id, action="analysis_v3_memory_layer_background_failed",
                     target_type="analysis_run", target_uid=str(run_id),
                     new_value={"error": str(exc)[:200], "elapsed_sec": round(elapsed, 1)},
                     reason="analysis v3 m7 memory layer background compression failed",
                 )
-            except Exception:
-                pass
 
     def run_probe_plans(self, book_id: int, run_id: int, *, update_run: bool = True, use_ai: bool = False) -> ProbeExecutionResult:
         facts = self.fact_store.list_facts(int(book_id), run_id=int(run_id), limit=None)

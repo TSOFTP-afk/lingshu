@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import unittest
-import sqlite3
 import os
+import sqlite3
+import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from novel_app.database import Database, UNASSIGNED_VOLUMES
+from novel_app.database import UNASSIGNED_VOLUMES, Database
 from novel_app.db.common import DATABASE_RESET_EPOCH_ID
 from novel_app.db.legacy import LegacyMixin
 from novel_app.structured_templates import (

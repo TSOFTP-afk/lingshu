@@ -101,7 +101,7 @@ def test_micro_cycle_no_snapshot(db):
     database, book_id = db
     char_id = database.create_character(book_id, "测试人物")
     with database.transaction():
-        result = database.create_cycle(char_id, {"cycle_type": "main", "intensity": "light"})
+        database.create_cycle(char_id, {"cycle_type": "main", "intensity": "light"})
     # micro 不通过 create_cycle，而是通过 create_micro_batch
     # 或者 create_cycle(micro) 应返回不存档
     # 根据 Mixin 实现，create_cycle 支持 micro（score=1），但 micro 不存档

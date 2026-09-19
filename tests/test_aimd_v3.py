@@ -3,10 +3,11 @@
 Mirrors the WS analysis_v3 path: stop service -> run -> start service.
 Logs AIMD slow-start ramp + M2/M4 (ai_mention / ai_fact) concurrency control.
 """
+import contextlib
+import logging
 import os
 import sys
 import time
-import logging
 import traceback
 from datetime import datetime
 
@@ -37,9 +38,9 @@ for _noisy in ('urllib3', 'httpx', 'httpcore', 'openai', 'sentence_transformers'
 
 from lingshu_api.services.db_bridge import WorkspaceDB
 from lingshu_api.ws.generation import _create_ai_service
-from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3, AI_MAX_WORKERS
-from novel_app.analysis.ai_provider import AIAnalysisProvider, AI_COREFERENCE_CONCURRENCY_MAX
+from novel_app.analysis.ai_provider import AI_COREFERENCE_CONCURRENCY_MAX, AIAnalysisProvider
 from novel_app.analysis.llm_cache import LLMCache
+from novel_app.analysis.pipeline_v3 import AI_MAX_WORKERS, AnalysisPipelineV3
 
 BOOK_ID = 6
 USER_ID = 1
@@ -59,7 +60,7 @@ stages_seen = []
 def progress_cb(stage, percent, message):
     elapsed = time.monotonic() - t0
     stages_seen.append((round(elapsed, 1), stage, percent, str(message)))
-    print('PROGRESS %.1fs stage=%s percent=%s msg=%s' % (elapsed, stage, percent, message), flush=True)
+    print(f'PROGRESS {elapsed:.1f}s stage={stage} percent={percent} msg={message}', flush=True)
 
 
 wdb = WorkspaceDB()
@@ -72,9 +73,9 @@ for row in wdb.list_chapters(BOOK_ID):
     if chapter and str(chapter.get('content') or '').strip():
         chapters.append(chapter)
 total_chars = sum(len(str(c.get('content') or '')) for c in chapters)
-print('loaded %d chapters, %d chars' % (len(chapters), total_chars), flush=True)
+print(f'loaded {len(chapters)} chapters, {total_chars} chars', flush=True)
 if not chapters:
-    print('ERROR: no chapters loaded for book_id=%d' % BOOK_ID)
+    print(f'ERROR: no chapters loaded for book_id={BOOK_ID}')
     wdb.close()
     sys.exit(2)
 
@@ -99,7 +100,7 @@ try:
     )
     elapsed = time.monotonic() - t0
     print('=' * 70, flush=True)
-    print('RUN COMPLETED in %.1fs' % elapsed, flush=True)
+    print(f'RUN COMPLETED in {elapsed:.1f}s', flush=True)
     print('status =', result.status)
     print('run_id =', result.run_id)
     print('block_count =', result.block_count)
@@ -117,7 +118,7 @@ try:
 except Exception as exc:
     elapsed = time.monotonic() - t0
     print('=' * 70, flush=True)
-    print('RUN FAILED in %.1fs' % elapsed, flush=True)
+    print(f'RUN FAILED in {elapsed:.1f}s', flush=True)
     print('error:', repr(exc), flush=True)
     traceback.print_exc()
     print('stages seen before failure:', flush=True)
@@ -125,8 +126,6 @@ except Exception as exc:
         print('  ', s, flush=True)
     raise
 finally:
-    try:
+    with contextlib.suppress(Exception):
         wdb.close()
-    except Exception:
-        pass
     print('end time:', datetime.now().isoformat(), flush=True)

@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import pytest
 
-from .helpers import FRONTEND_URL, E2E_BOOK_PREFIX, is_frontend_up
+from .helpers import E2E_BOOK_PREFIX, FRONTEND_URL, get_e2e_credentials, is_frontend_up
 
 # ================================================================
 # Playwright 可用性检测
 # ================================================================
 try:
-    from playwright.sync_api import sync_playwright, Page, BrowserContext  # noqa: F401
+    from playwright.sync_api import BrowserContext, Page, sync_playwright  # noqa: F401
 
     pytestmark = pytest.mark.runtime_e2e
 except ImportError:
@@ -82,8 +82,9 @@ def test_frontend_login(playwright_page):
         if not login_title.is_visible():
             page.get_by_role("button", name="未登录").click()
         # 输入账号密码
-        page.get_by_label("用户名").fill("001")
-        page.get_by_label("密码").fill("12345678a")
+        e2e_user, e2e_pass = get_e2e_credentials()
+        page.get_by_label("用户名").fill(e2e_user)
+        page.get_by_label("密码").fill(e2e_pass)
         # 提交登录（点击登录按钮或按回车）
         page.get_by_role("button", name="登录").click()
         # 等待跳转到工作台

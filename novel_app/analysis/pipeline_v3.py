@@ -16,18 +16,19 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from novel_app.analysis.backtrack import BacktrackPlanner
 from novel_app.analysis.card_coordinator import CardCoordinator, CardCoordinatorResult
-from novel_app.analysis.card_post_processor import CardPostProcessor
 from novel_app.analysis.consistency_checker import ConsistencyChecker
 from novel_app.analysis.entity_identity_resolver import EntityIdentityResolver
 from novel_app.analysis.entity_store import EntityStore
 from novel_app.analysis.fact_store import FactStore
 from novel_app.analysis.memory_classifier import MemoryClassifier
 from novel_app.analysis.memory_compressor import MemoryCompressor
-from novel_app.analysis.pipeline_v3_config import PipelineV3Config, PipelineV3Memory, PipelineV3Planners, PipelineV3Stores
+from novel_app.analysis.pipeline_v3_config import (
+    PipelineV3Config,
+)
 from novel_app.analysis.pipeline_v3_incremental import PipelineV3IncrementalMixin
 from novel_app.analysis.pipeline_v3_stages import PipelineV3StagesMixin
 from novel_app.analysis.probe_executor import ProbeExecutor
@@ -65,7 +66,7 @@ _PIPELINE_V3_STAGE_INDEX = {stage["key"]: index for index, stage in enumerate(PI
 _PIPELINE_V3_STAGE_MAP = {stage["key"]: stage for stage in PIPELINE_V3_STAGES}
 
 
-class AnalysisPipelineV3Cancelled(RuntimeError):
+class AnalysisPipelineV3Cancelled(RuntimeError):  # noqa: N818 — 对外异常名已被 ws/测试引用，改名破坏兼容
     """Raised when a V3 analysis run is cancelled cooperatively."""
 
 
@@ -417,9 +418,8 @@ class AnalysisPipelineV3(PipelineV3StagesMixin, PipelineV3IncrementalMixin):
                 ]:
                     if stage_engine == "ai":
                         ai_stages.append(stage_name)
-                    elif stage_engine in ("rule_fallback", "rule"):
-                        if stage_engine == "rule_fallback":
-                            ai_fallback_stages.append(stage_name)
+                    elif stage_engine == "rule_fallback":
+                        ai_fallback_stages.append(stage_name)
                 base_meta["ai_stages"] = ai_stages
                 base_meta["ai_fallback_stages"] = ai_fallback_stages
 
@@ -428,7 +428,7 @@ class AnalysisPipelineV3(PipelineV3StagesMixin, PipelineV3IncrementalMixin):
                 int(book_id), run_id, base_meta, chapter_payload, block_ids,
                 mention_count, entity_count, fact_count, memory_result, card_result, probe_result,
                 skipped_block_count, chapter_batch_size, use_ai)
-        except AnalysisPipelineV3Cancelled as exc:
+        except AnalysisPipelineV3Cancelled:
             logger.info("Analysis V3 pipeline cancelled for book_id=%s run_id=%s", book_id, run_id)
             self.store.update_run_status(run_id, "cancelled", error_text="分析运行已取消", meta={**base_meta, "pipeline_cancelled": True})
             raise
@@ -441,7 +441,7 @@ class AnalysisPipelineV3(PipelineV3StagesMixin, PipelineV3IncrementalMixin):
                 meta={**base_meta, "pipeline_failed": True, "pipeline_timeout": True, "timeout_error": str(exc)},
             )
             raise
-        except Exception as exc:
+        except Exception:
             logger.exception("Analysis V3 pipeline failed for book_id=%s run_id=%s", book_id, run_id)
             self.store.update_run_status(run_id, "failed", error_text="分析运行失败，请稍后重试", meta={**base_meta, "pipeline_failed": True})
             raise

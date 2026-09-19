@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
@@ -135,10 +136,8 @@ def reset_redis_client() -> None:
     global _client, _client_initialized
     with _client_lock:
         if _client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _client.close()
-            except Exception:
-                pass
         _client = None
         _client_initialized = False
 

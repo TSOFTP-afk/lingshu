@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -91,7 +90,7 @@ def _utc_to_beijing(value: Any) -> str:
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
         try:
             dt = datetime.strptime(text[:19] if len(text) >= 19 else text, fmt)
-            dt = dt.replace(tzinfo=timezone.utc).astimezone(_BEIJING_TZ)
+            dt = dt.replace(tzinfo=UTC).astimezone(_BEIJING_TZ)
             return dt.strftime("%Y-%m-%d %H:%M:%S")
         except ValueError:
             continue

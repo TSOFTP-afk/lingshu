@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 
 def _verify_book_chapter_ownership(
-    database: "Database",
+    database: Database,
     book_id: int,
     payload: dict[str, Any],
     user_id: int | None,
@@ -43,9 +43,8 @@ def _verify_book_chapter_ownership(
        防止攻击者在 chapter_updates 中混入其他书籍的章节 ID。
     校验失败抛 ValueError。
     """
-    if user_id is not None:
-        if not database.check_book_ownership(book_id, user_id):
-            raise ValueError(f"用户 {user_id} 无权操作书籍 {book_id}")
+    if user_id is not None and not database.check_book_ownership(book_id, user_id):
+        raise ValueError(f"用户 {user_id} 无权操作书籍 {book_id}")
     chapter_items = payload.get("chapter_updates", [])
     if not isinstance(chapter_items, list):
         return

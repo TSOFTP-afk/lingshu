@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from threading import Event
 from tempfile import TemporaryDirectory
+from threading import Event
 
 import pytest
 
-from novel_app.analysis.pipeline_v3 import PIPELINE_V3_VERSION, AnalysisPipelineV3, AnalysisPipelineV3Cancelled
 from novel_app.analysis.card_coordinator import CardCoordinatorResult
 from novel_app.analysis.entity_store import EntityStore
 from novel_app.analysis.fact_store import FactStore
+from novel_app.analysis.pipeline_v3 import PIPELINE_V3_VERSION, AnalysisPipelineV3, AnalysisPipelineV3Cancelled
 from novel_app.analysis.probe_executor import ProbeExecutionResult
 from novel_app.analysis.semantic_chunker import SemanticChunker
 from novel_app.analysis.store import AnalysisStore

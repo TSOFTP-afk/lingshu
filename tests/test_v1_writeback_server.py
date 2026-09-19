@@ -5,8 +5,8 @@ V1 一次性分析 + 卡片写回测试（服务器端，纯标准库，同步�
 import json
 import os
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 
 BASE = "http://127.0.0.1:8787"
 
@@ -80,7 +80,7 @@ def main():
         return
 
     # 2. AI 配置
-    print(f"\n=== 设置 AI 配置 ===")
+    print("\n=== 设置 AI 配置 ===")
     ai_config = {
         "remote_enabled": True, "provider": "deepseek",
         "api_key": os.environ.get("LINGSHU_AI_API_KEY", "sk-test-placeholder"),
@@ -95,7 +95,7 @@ def main():
     print(f"  PUT /api/settings/ai: {status}")
 
     # 3. 获取范例书籍
-    print(f"\n=== 获取范例书籍 ===")
+    print("\n=== 获取范例书籍 ===")
     status, data = api("GET", "/api/workspace/books", token=token, timeout=30)
     items = data.get("items", [])
     if not items:
@@ -105,11 +105,11 @@ def main():
     print(f"  book_id={book_id} title={items[0].get('title', '')[:30]}")
 
     # 4. 写回前状态
-    print(f"\n=== 写回前状态 ===")
+    print("\n=== 写回前状态 ===")
     before = snapshot(token, book_id)
 
     # 5. V1 一次性分析
-    print(f"\n=== V1 一次性分析 (可能需要 5-15 分钟) ===")
+    print("\n=== V1 一次性分析 (可能需要 5-15 分钟) ===")
     start = time.time()
     try:
         status, body = api("POST", f"/api/workspace/books/{book_id}/analysis-v1/one-shot",
@@ -132,7 +132,7 @@ def main():
         return
 
     # 6. 卡片列表
-    print(f"\n=== 分析卡片列表 ===")
+    print("\n=== 分析卡片列表 ===")
     status, data = api("GET", f"/api/workspace/analysis/runs/{run_id}/cards", token=token, timeout=30)
     cards = data.get("items", [])
     print(f"  共 {len(cards)} 张卡片:")
@@ -180,11 +180,11 @@ def main():
             print(f"  错误: {body}")
 
     # 8. 写回后状态
-    print(f"\n=== 写回后状态 ===")
+    print("\n=== 写回后状态 ===")
     after = snapshot(token, book_id)
 
     # 9. 对比
-    print(f"\n=== 写回前后对比 ===")
+    print("\n=== 写回前后对比 ===")
     compare("characters", before.get("characters", []), after.get("characters", []))
     compare("world_entries", before.get("world_entries", []), after.get("world_entries", []))
     compare("outline_text", before.get("outline_text", ""), after.get("outline_text", ""))

@@ -18,9 +18,9 @@ from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from novel_app.analysis.card_generators_v3 import build_v3_entity_card, _extract_static_attrs_from_facts
-from novel_app.analysis.state_machine_writeback import writeback_to_state_machine
+from novel_app.analysis.card_generators_v3 import _extract_static_attrs_from_facts, build_v3_entity_card
 from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3
+from novel_app.analysis.state_machine_writeback import writeback_to_state_machine
 from novel_app.database import Database
 
 # 《斗破苍穹》第一章片段 — 含明确的外貌/年龄/性别/身份描述
@@ -229,8 +229,8 @@ def run_static_attrs_real_novel_test():
             assert "十六" in sm_after.get("age", ""), f"保守映射失败：age 被覆盖为 '{sm_after.get('age')}'"
             # alias 原为空，应被写入"炎少"
             assert "炎少" in sm_after.get("alias", ""), f"保守映射失败：alias 未写入，实际为 '{sm_after.get('alias')}'"
-            print(f"  ✓ age 保持 '十六岁'（未被覆盖）")
-            print(f"  ✓ alias 写入 '炎少'（原为空，被填充）")
+            print("  ✓ age 保持 '十六岁'（未被覆盖）")
+            print("  ✓ alias 写入 '炎少'（原为空，被填充）")
 
             # Step 9: 验证 update_character_form 状态机分支同步 profile_data_json
             _print_section("Step 9: 验证 update_character_form 同步 profile_data_json")

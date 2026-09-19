@@ -6,12 +6,12 @@ target writeback fields expected by character, world-entry, and book writes.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 from dataclasses import dataclass
 from typing import Any
 
 from novel_app.database import Database
-
 
 SYSTEM_PROMPT_WRITEBACK_CARD = """你是一名专业的长篇小说设定整理助手。你的任务是把自动分析卡片转换为正式写回字段。
 
@@ -245,10 +245,8 @@ def _existing_business_data(
         data = _row_to_dict(character)
         character_id = _safe_int(data.get("id"))
         if character_id is not None:
-            try:
+            with contextlib.suppress(Exception):
                 data["profile_form"] = database.get_character_profile_form(character_id)
-            except Exception:
-                pass
         return _trim_dict(data)
 
     if target == "world_entry":
@@ -326,7 +324,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     if isinstance(row, dict):
         return dict(row)
     try:
-        return {key: row[key] for key in row.keys()}
+        return {key: row[key] for key in row.keys()}  # noqa: SIM118 — row 是 sqlite3.Row，`in row`/直接迭代产出的是值而非键，必须用 .keys()
     except Exception:
         return {}
 

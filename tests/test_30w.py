@@ -1,17 +1,21 @@
 """30万字长篇测试 — AI 增强分析 (并发50, 窗口6K)。"""
 from __future__ import annotations
 
-import pytest
-
-import contextlib, json, os, re, sys, time
+import contextlib
+import os
+import re
+import sys
+import time
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3
+from novel_app.ai.service import SimpleAIService
 from novel_app.analysis.ai_provider import AIAnalysisProvider
 from novel_app.analysis.llm_cache import LLMCache
-from novel_app.ai.service import SimpleAIService
+from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3
 from novel_app.database import Database
 
 NOVEL_PATH = os.environ.get("LINGSHU_TEST_NOVEL_PATH", "")
@@ -34,7 +38,7 @@ SECTION_HEAD_RE = re.compile(r"^第[一二三四五六七八九十百千\d]{1,4}
 
 def main():
     print("=" * 60)
-    print(f"《蛊真人》30万字长篇测试 (并发50, 窗口6K)")
+    print("《蛊真人》30万字长篇测试 (并发50, 窗口6K)")
     print("=" * 60)
 
     # 读文件 & 分割
@@ -88,7 +92,7 @@ def main():
         (result.run_id,),
     ).fetchall()
 
-    print(f"\n  ═══ 结果 ═══")
+    print("\n  ═══ 结果 ═══")
     print(f"  耗时: {elapsed:.1f}s ({elapsed/60:.1f}min)")
     print(f"  API调用: {result.meta.get('ai_call_count','?')} 次")
     print(f"  Blocks={result.block_count}  Mentions={result.mention_count}  "
@@ -97,7 +101,7 @@ def main():
     if result.meta.get("ai_fallback_stages"):
         print(f"  降级: {result.meta['ai_fallback_stages']}")
 
-    print(f"\n  卡片分布:")
+    print("\n  卡片分布:")
     for row in cards:
         print(f"    {row['card_type']}: {row['cnt']}")
 
@@ -121,7 +125,7 @@ def main():
            ORDER BY CAST(fc AS INTEGER) DESC LIMIT 15""",
         (result.run_id,),
     ).fetchall()
-    print(f"\n  Top 15 人物:")
+    print("\n  Top 15 人物:")
     for r in top:
         print(f"    {r['name']:18s} {r['fc']} 条")
 

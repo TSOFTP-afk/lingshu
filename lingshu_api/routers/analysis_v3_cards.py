@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-
+from fastapi import APIRouter, Depends, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -17,14 +17,13 @@ from lingshu_api.routers.analysis_v3_runs import (
     _check_run_book_owner,
     _create_required_analysis_ai_provider,
     _get_analysis_v3_run_or_404,
-    _classify_error_text,
     _utc_to_beijing,
 )
 from lingshu_api.routers.analysis_v3_steps import _row_value, get_analysis_v3_review_summary
 from lingshu_api.schemas.analysis_v3 import CardApplyRequest, WritebackRunRequest
 from lingshu_api.services.db_bridge import WorkspaceDB, get_workspace_db
 from novel_app.analysis.store import AnalysisStore
-from novel_app.json_utils import extract_json_array, extract_json_object
+from novel_app.json_utils import extract_json_object
 
 router = APIRouter(prefix="/api/workspace", tags=["analysis-v3-cards"])
 _cloud_logger = logging.getLogger(__name__)
@@ -164,10 +163,8 @@ async def apply_analysis_v3_card(
         )
     actor = "user"
     run_meta = {}
-    try:
+    with contextlib.suppress(Exception):
         run_meta = json.loads(str(run["meta_json"] or "{}"))
-    except Exception:
-        pass
     ai_invoked = bool(run_meta.get("ai_invoked") or run_meta.get("ai_stages"))
     use_writeback_generator = bool(ai_invoked) and not allow_soft_blockers
     writeback_generator = _create_writeback_card_generator(db, user_id=int(user["id"])) if use_writeback_generator else None
@@ -238,10 +235,8 @@ async def writeback_analysis_v3_card(
 
     actor = "user"
     run_meta = {}
-    try:
+    with contextlib.suppress(Exception):
         run_meta = json.loads(str(run["meta_json"] or "{}"))
-    except Exception:
-        pass
     ai_invoked = bool(run_meta.get("ai_invoked") or run_meta.get("ai_stages"))
     use_writeback_generator = bool(ai_invoked) and not allow_soft_blockers
     writeback_generator = _create_writeback_card_generator(db, user_id=int(user["id"])) if use_writeback_generator else None
@@ -344,10 +339,8 @@ async def writeback_analysis_v3_run(
         return {"ok": True, "writeback_count": 0, "message": "无可写回的卡片"}
 
     run_meta = {}
-    try:
+    with contextlib.suppress(Exception):
         run_meta = json.loads(str(run["meta_json"] or "{}"))
-    except Exception:
-        pass
     ai_invoked = bool(run_meta.get("ai_invoked") or run_meta.get("ai_stages"))
     use_writeback_generator = bool(ai_invoked) and not allow_soft_blockers
     writeback_generator = _create_writeback_card_generator(db, user_id=int(user["id"])) if use_writeback_generator else None

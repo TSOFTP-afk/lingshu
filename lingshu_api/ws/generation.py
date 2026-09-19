@@ -252,7 +252,7 @@ async def _run_generation(store, manager, client_id, task_id, mode, payload, can
     except asyncio.CancelledError:
         cancel_event.set()
         raise
-    except Exception as e:
+    except Exception:
         if cancel_event.is_set():
             _try_create_generation_snapshot(
                 workspace_db, chapter_id,

@@ -15,7 +15,7 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from lingshu_api.dependencies import check_book_owner, require_login
@@ -58,8 +58,8 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
         "source": str(row["source"] or "manual"),
         "setup_chapter_id": row["setup_chapter_id"] if row["setup_chapter_id"] else None,
         "payoff_chapter_id": row["payoff_chapter_id"] if row["payoff_chapter_id"] else None,
-        "setup_chapter_title": str(row["setup_chapter_title"]) if "setup_chapter_title" in row.keys() and row["setup_chapter_title"] else None,
-        "payoff_chapter_title": str(row["payoff_chapter_title"]) if "payoff_chapter_title" in row.keys() and row["payoff_chapter_title"] else None,
+        "setup_chapter_title": str(row["setup_chapter_title"]) if "setup_chapter_title" in row.keys() and row["setup_chapter_title"] else None,  # noqa: SIM118 — row 是 sqlite3.Row，`in row`/直接迭代产出的是值而非键，必须用 .keys()
+        "payoff_chapter_title": str(row["payoff_chapter_title"]) if "payoff_chapter_title" in row.keys() and row["payoff_chapter_title"] else None,  # noqa: SIM118 — row 是 sqlite3.Row，`in row`/直接迭代产出的是值而非键，必须用 .keys()
         "resolution_note": str(row["resolution_note"] or ""),
         "fact_uid": str(row["fact_uid"] or ""),
         "created_at": str(row["created_at"] or ""),

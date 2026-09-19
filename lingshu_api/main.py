@@ -85,18 +85,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         except Exception:
             pass
         # 启动时执行 WAL checkpoint，清理上次运行遗留的 WAL 数据
-        try:
+        with suppress(Exception):
             workspace_provider.get().db.connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except Exception:
-            pass
         # 定期 WAL checkpoint，防止 WAL 膨胀拖慢写入操作
         async def _wal_checkpoint_loop():
             while True:
                 await asyncio.sleep(300)  # 每 5 分钟执行一次
-                try:
+                with suppress(Exception):
                     workspace_provider.get().db.connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
-                except Exception:
-                    pass
         wal_task = asyncio.create_task(_wal_checkpoint_loop())
         yield
         # shutdown: 取消后台任务

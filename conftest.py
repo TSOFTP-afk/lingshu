@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent
 QT_MODULE_PRESENT = (PROJECT_ROOT / "novel_app" / "qt").exists()
 QT_TESTS = {

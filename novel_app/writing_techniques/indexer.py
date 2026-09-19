@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 class TechniqueIndexer:
     """写作技巧集索引服务（单例，进程级缓存）。"""
 
-    _instance: "TechniqueIndexer | None" = None
+    _instance: TechniqueIndexer | None = None
     _lock = threading.Lock()
 
-    def __new__(cls, *args: Any, **kwargs: Any) -> "TechniqueIndexer":
+    def __new__(cls, *args: Any, **kwargs: Any) -> TechniqueIndexer:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -43,7 +43,7 @@ class TechniqueIndexer:
         self._initialized = True
 
     @classmethod
-    def reload(cls, base_dir: Any = None) -> "TechniqueIndexer":
+    def reload(cls, base_dir: Any = None) -> TechniqueIndexer:
         """重新加载（目录变更后调用）。"""
         with cls._lock:
             if cls._instance is None:

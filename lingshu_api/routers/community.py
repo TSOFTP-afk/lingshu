@@ -34,7 +34,7 @@ class CardUploadRequest(BaseModel):
 
 @router.get("/cards")
 def list_cards(
-    type: str | None = None,
+    type: str | None = None,  # noqa: A002 — FastAPI 查询参数名固定为 type（API 契约）
     page: int = 1,
     page_size: int = 20,
     db: WorkspaceDB = Depends(get_workspace_db),
@@ -54,9 +54,9 @@ def list_cards(
         return store.list_posts(card_type=type, page=page, page_size=page_size)
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("列出社区卡片失败 type=%s page=%s page_size=%s", type, page, page_size)
-        raise HTTPException(status_code=500, detail="获取社区卡片列表失败，请稍后重试")
+        raise HTTPException(status_code=500, detail="获取社区卡片列表失败，请稍后重试") from exc
 
 
 @router.get("/cards/{post_id}")
@@ -70,9 +70,9 @@ def get_card(
         post = store.get_post(post_id)
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("获取社区卡片失败 post_id=%s", post_id)
-        raise HTTPException(status_code=500, detail="获取社区卡片失败，请稍后重试")
+        raise HTTPException(status_code=500, detail="获取社区卡片失败，请稍后重试") from exc
     if post is None:
         raise HTTPException(status_code=404, detail="卡片不存在")
     return post
@@ -99,18 +99,18 @@ def upload_card(
             source_card_id=payload.source_card_id,
             intro=intro,
         )
-    except DuplicatePostError:
-        raise HTTPException(status_code=409, detail="该卡片已上传到社区")
+    except DuplicatePostError as exc:
+        raise HTTPException(status_code=409, detail="该卡片已上传到社区") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "上传社区卡片失败 user_id=%s card_type=%s source_book_id=%s",
             user_id, payload.card_type, payload.source_book_id,
         )
-        raise HTTPException(status_code=500, detail="上传失败，请稍后重试")
+        raise HTTPException(status_code=500, detail="上传失败，请稍后重试") from exc
     return {"id": new_id, "message": "上传成功"}
 
 
@@ -128,13 +128,13 @@ def delete_card(
     store = CommunityStore(db.db)
     try:
         deleted = store.delete_post(post_id, user_id)
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="无权删除他人上传的卡片")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="无权删除他人上传的卡片") from exc
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("删除社区卡片失败 post_id=%s user_id=%s", post_id, user_id)
-        raise HTTPException(status_code=500, detail="删除失败，请稍后重试")
+        raise HTTPException(status_code=500, detail="删除失败，请稍后重试") from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="卡片不存在")
     return Response(status_code=204)

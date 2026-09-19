@@ -77,14 +77,14 @@ async def create_analysis_v1_one_shot_run(
 
     # V1 分析字数上限检查：超过 30 万字提示切换 V3 分析
     # V1 一次性读完分析需要将全书文本塞入单次 LLM 请求，超长文本会触发 token 上限或超时
-    V1_ANALYSIS_MAX_TOTAL_CHARS = 300_000
+    v1_analysis_max_total_chars = 300_000
     total_content_chars = sum(len(str(ch.get("content") or "")) for ch in chapters)
-    if total_content_chars > V1_ANALYSIS_MAX_TOTAL_CHARS:
+    if total_content_chars > v1_analysis_max_total_chars:
         raise HTTPException(
             status_code=413,
             detail=(
                 f"作品总字数约 {total_content_chars:,} 字，超过 V1 一次性分析上限 "
-                f"{V1_ANALYSIS_MAX_TOTAL_CHARS:,} 字。请切换使用 V3 分析功能"
+                f"{v1_analysis_max_total_chars:,} 字。请切换使用 V3 分析功能"
                 f"（POST /api/workspace/books/{book_id}/analysis-v3/runs），"
                 f"V3 支持分章节流式分析与 AI 增强，适合处理长篇作品。"
             ),
@@ -106,7 +106,7 @@ async def create_analysis_v1_one_shot_run(
 
     def _sync():
         from novel_app.analysis.chunker import AnalysisChunker
-        from novel_app.analysis.pipeline import AnalysisPipeline, PIPELINE_VERSION
+        from novel_app.analysis.pipeline import AnalysisPipeline
         from novel_app.analysis.utils import chapter_dict as _chapter_dict
 
         # 准备 source_blocks

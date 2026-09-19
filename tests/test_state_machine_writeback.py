@@ -41,7 +41,7 @@ def test_writeback_low_confidence_to_cycle_log(db):
     database, book_id = db
     char_id = database.create_character(book_id, "测试人物")
     with database.transaction():
-        result = writeback_to_state_machine(database, book_id, char_id, [
+        writeback_to_state_machine(database, book_id, char_id, [
             {"fact_type": "unknown_type", "content": "某条未知分析信息"},
         ])
     sm = database.get_state_machine(char_id)
@@ -70,7 +70,7 @@ def test_writeback_creates_cycle_log(db):
     database, book_id = db
     char_id = database.create_character(book_id, "测试人物")
     with database.transaction():
-        result = writeback_to_state_machine(database, book_id, char_id, [
+        writeback_to_state_machine(database, book_id, char_id, [
             {"fact_type": "strategy", "content": "以最小代价换取最大确定性"},
         ])
     cycles = database.list_cycles(char_id)

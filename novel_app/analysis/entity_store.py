@@ -258,7 +258,7 @@ def _mention_row(row: sqlite3.Row) -> dict[str, Any]:
 
 def _row_has_key(row: sqlite3.Row, key: str) -> bool:
     try:
-        return key in row.keys()
+        return key in row.keys()  # noqa: SIM118 — row 是 sqlite3.Row，`in row`/直接迭代产出的是值而非键，必须用 .keys()
     except Exception:
         return False
 

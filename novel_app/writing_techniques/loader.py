@@ -335,7 +335,7 @@ class WritingTechniqueLoader:
     def _extract_table_rows(raw: str, section_title: str) -> list[dict]:
         body = WritingTechniqueLoader._extract_section_body(raw, section_title)
         rows: list[dict] = []
-        lines = [l for l in body.splitlines() if l.strip()]
+        lines = [ln for ln in body.splitlines() if ln.strip()]
         if len(lines) < 2:
             return rows
         # 第一行表头
@@ -349,7 +349,7 @@ class WritingTechniqueLoader:
                 continue
             cells = [c.strip() for c in line.strip("|").split("|")]
             if len(cells) == len(headers):
-                rows.append(dict(zip(headers, cells)))
+                rows.append(dict(zip(headers, cells, strict=False)))
         return rows
 
     @staticmethod

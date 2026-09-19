@@ -12,6 +12,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "novel_app/db/*.py" = ["F403", "F405"]
+# test_aimd_v3.py 需先配置 logging/路径等运行环境，再导入被测模块（E402 属有意为之）。
+"tests/test_aimd_v3.py" = ["E402"]
+# runtime_e2e/helpers.py 打开的日志文件句柄生命周期跟随子进程，由调用方统一关闭。
+"tests/runtime_e2e/helpers.py" = ["SIM115"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["novel_app", "lingshu_api"]

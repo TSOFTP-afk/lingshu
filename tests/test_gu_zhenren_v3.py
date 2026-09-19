@@ -2,8 +2,6 @@
 """
 from __future__ import annotations
 
-import pytest
-
 import contextlib
 import json
 import os
@@ -11,14 +9,15 @@ import re
 import sys
 import time
 from pathlib import Path
-from tempfile import TemporaryDirectory
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3
+from novel_app.ai.service import SimpleAIService
 from novel_app.analysis.ai_provider import AIAnalysisProvider
 from novel_app.analysis.llm_cache import LLMCache
-from novel_app.ai.service import SimpleAIService
+from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3
 from novel_app.database import Database
 
 NOVEL_PATH = os.environ.get("LINGSHU_TEST_NOVEL_PATH", "")
@@ -156,7 +155,7 @@ def main():
     llm_cache = LLMCache(db_ai)
     ai_provider = AIAnalysisProvider(ai_service, llm_cache)
 
-    print(f"  开始 AI 分析 (~89K字, 约3-8分钟)...")
+    print("  开始 AI 分析 (~89K字, 约3-8分钟)...")
     t0 = time.time()
     ai_result = AnalysisPipelineV3(db_ai, ai_provider=ai_provider).start_run(bid, use_ai=True)
     t_ai = time.time() - t0

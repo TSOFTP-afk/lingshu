@@ -1,6 +1,7 @@
 """WritingProbeService 单元测试。"""
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import pytest
@@ -25,10 +26,8 @@ def service_with_book(tmp_path: Path):
     service = WritingProbeService(db, probe_enabled=True, ai_available=False)
     yield db, service, book_id
     # Windows 下显式释放连接，避免文件锁
-    try:
+    with contextlib.suppress(Exception):
         db.connection.close()
-    except Exception:
-        pass
 
 
 def test_scan_chapter_discovers_new_characters_via_rule(service_with_book) -> None:

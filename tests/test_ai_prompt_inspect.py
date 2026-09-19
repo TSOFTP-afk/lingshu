@@ -9,14 +9,13 @@ import os
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from novel_app.ai.service import SimpleAIService
 from novel_app.analysis.ai_provider import AIAnalysisProvider
 from novel_app.analysis.llm_cache import LLMCache
 from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3
-from novel_app.ai.service import SimpleAIService
 from novel_app.database import Database
 
 os.environ.setdefault("LINGSHU_AI_API_KEY", "sk-test-placeholder")

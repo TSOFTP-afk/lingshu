@@ -80,9 +80,8 @@ def test_five_failures_then_banned_by_default(client: TestClient, monkeypatch) -
                 resp = ws.receive_json()
                 assert resp["type"] == "error", resp
         # 第 6 次连接应在 connect 阶段即被以 4003 拒绝
-        with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect("/ws/chat") as ws:
-                ws.receive_json()
+        with pytest.raises(WebSocketDisconnect), client.websocket_connect("/ws/chat") as ws:
+            ws.receive_json()
     finally:
         manager._ip_bans.clear()
         manager._ip_failures.clear()

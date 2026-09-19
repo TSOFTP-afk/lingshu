@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from novel_app.ai.protocols import AIReviewProtocol
-
 
 class ReviewService:
     """独立的 AI 审查服务，包装 AIReviewMixin 的功能

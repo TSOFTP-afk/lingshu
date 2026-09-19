@@ -19,7 +19,7 @@ from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from novel_app.analysis.card_generators_v3 import build_v3_entity_card, _extract_static_attrs_from_facts
+from novel_app.analysis.card_generators_v3 import _extract_static_attrs_from_facts, build_v3_entity_card
 from novel_app.analysis.pipeline_v3 import PIPELINE_V3_VERSION, AnalysisPipelineV3
 from novel_app.analysis.state_machine_writeback import writeback_to_state_machine
 from novel_app.database import Database
@@ -75,7 +75,7 @@ def run_jingzhongchan_v3_full_test():
     print("灵枢 V3 分析管道 — 真实书籍全书测试（《镜中蝉》）")
     print("=" * 80)
     print(f"管道版本: {PIPELINE_V3_VERSION}")
-    print(f"测试用书: 《镜中蝉》（灵枢范例小说·民国悬疑短篇）")
+    print("测试用书: 《镜中蝉》（灵枢范例小说·民国悬疑短篇）")
 
     # 读取原文
     if not SAMPLE_NOVEL_PATH.exists():

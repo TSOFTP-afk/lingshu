@@ -1,17 +1,21 @@
 """快速测试：AI 增强分析 — 并发 20，窗口 6000 字。"""
 from __future__ import annotations
 
-import pytest
-
-import contextlib, json, os, re, sys, time
+import contextlib
+import os
+import re
+import sys
+import time
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3
+from novel_app.ai.service import SimpleAIService
 from novel_app.analysis.ai_provider import AIAnalysisProvider
 from novel_app.analysis.llm_cache import LLMCache
-from novel_app.ai.service import SimpleAIService
+from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3
 from novel_app.database import Database
 
 NOVEL_PATH = os.environ.get("LINGSHU_TEST_NOVEL_PATH", "")
@@ -71,7 +75,7 @@ def main():
     llm_cache = LLMCache(db)
     ai_provider = AIAnalysisProvider(ai_service, llm_cache)
 
-    print(f"  开始分析...")
+    print("  开始分析...")
     t0 = time.time()
     result = AnalysisPipelineV3(db, ai_provider=ai_provider).start_run(book_id, use_ai=True)
     elapsed = time.time() - t0
@@ -90,7 +94,7 @@ def main():
     if result.meta.get("ai_fallback_stages"):
         print(f"  降级: {result.meta['ai_fallback_stages']}")
 
-    print(f"\n  卡片分布:")
+    print("\n  卡片分布:")
     for row in cards:
         print(f"    {row['card_type']}: {row['cnt']} 张")
 
@@ -101,7 +105,7 @@ def main():
            ORDER BY CAST(fc AS INTEGER) DESC LIMIT 10""",
         (result.run_id,),
     ).fetchall()
-    print(f"\n  Top 10 人物卡:")
+    print("\n  Top 10 人物卡:")
     for r in top_chars:
         print(f"    {r['name']:15s} {r['fc']} 条事实")
 

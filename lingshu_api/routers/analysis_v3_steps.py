@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -15,10 +15,9 @@ from lingshu_api.dependencies import check_book_owner, require_login
 from lingshu_api.routers.analysis_v3_runs import (
     _analysis_v3_run_item,
     _check_run_book_owner,
+    _classify_error_text,
     _create_required_analysis_ai_provider,
     _get_analysis_v3_run_or_404,
-    _is_analysis_v3_run,
-    _classify_error_text,
     _utc_to_beijing,
 )
 from lingshu_api.schemas.analysis_v3 import (
@@ -36,7 +35,7 @@ from novel_app.analysis.entity_store import EntityStore
 from novel_app.analysis.fact_store import FactStore
 from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3
 from novel_app.analysis.store import AnalysisStore
-from novel_app.json_utils import extract_json_array, extract_json_object
+from novel_app.json_utils import extract_json_object
 
 router = APIRouter(prefix="/api/workspace", tags=["analysis-v3-steps"])
 _cloud_logger = logging.getLogger(__name__)
@@ -528,10 +527,8 @@ async def get_analysis_v3_review_summary(
     blockers = []
     soft_blockers = []
     run_meta = {}
-    try:
+    with contextlib.suppress(Exception):
         run_meta = json.loads(str(run["meta_json"] or "{}"))
-    except Exception:
-        pass
     ai_invoked = run_meta.get("ai_invoked") or run_meta.get("ai_stages")
 
     if entity_status_counts.get("candidate", 0) and ai_invoked:

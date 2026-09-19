@@ -18,7 +18,7 @@
     "test:quick": "python -c \"from lingshu_api.main import app; print(f'OK: {sum(1 for r in app.routes if hasattr(r,\\\"methods\\\"))} routes')\"",
     "lint": "npm run lint:frontend && npm run lint:python",
     "lint:frontend": "npm run lint --prefix lingshu-app",
-    "lint:python": "python -m ruff check lingshu_api novel_app tests",
+    "lint:python": "python -m ruff check lingshu_api novel_app shared tests test_core_modules.py test_database_extensions.py test_text_importer.py conftest.py main.py",
     "test:e2e": "playwright test",
     "test:e2e:list": "playwright test --list"
   },

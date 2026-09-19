@@ -22,7 +22,7 @@ import re
 import sqlite3
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -80,7 +80,7 @@ def _parse_timestamp(ts: str | None) -> datetime | None:
             ts = ts[:-1] + "+00:00"
         dt = datetime.fromisoformat(ts)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
     except (ValueError, TypeError):
         return None
@@ -107,7 +107,7 @@ class SyncResult:
     def has_errors(self) -> bool:
         return bool(self.errors)
 
-    def merge(self, other: "SyncResult") -> None:
+    def merge(self, other: SyncResult) -> None:
         self.pushed += other.pushed
         self.pulled += other.pulled
         self.skipped += other.skipped
@@ -321,7 +321,7 @@ class SyncEngine:
             return None
         if row is None:
             return None
-        return {k: _serialize_value(row[k]) for k in row.keys()}
+        return {k: _serialize_value(row[k]) for k in row.keys()}  # noqa: SIM118 — row 是 sqlite3.Row，`in row`/直接迭代产出的是值而非键，必须用 .keys()
 
     @staticmethod
     def _parse_payload(payload_json: str | None) -> dict[str, Any]:
@@ -451,7 +451,7 @@ class SyncEngine:
     def _upsert_local_row(self, table_name: str, data: dict[str, Any]) -> None:
         """INSERT OR REPLACE 一行数据（绕过 mixin，不触发 log_change）。"""
         table = _validate_table(table_name)
-        columns = [c for c in data.keys() if _validate_column(c)]
+        columns = [c for c in data if _validate_column(c)]
         if not columns:
             return
         values = [data[c] for c in columns]

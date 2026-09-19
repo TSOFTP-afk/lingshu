@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from novel_app.analysis.schemas_v3 import stable_hash
@@ -124,7 +124,7 @@ class ActiveProbeExecutor:
       "references": llm_result.get("references", []),
       "confidence": llm_result.get("confidence", 0.7),
       "rag_results_count": len(results),
-      "created_at": datetime.now(timezone.utc).isoformat(),
+      "created_at": datetime.now(UTC).isoformat(),
     }
 
   def _call_llm(self, query: str, context_text: str) -> dict[str, Any]:

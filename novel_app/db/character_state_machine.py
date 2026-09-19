@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from novel_app.db.common import *
 
-
 # 状态机主表可写入字段白名单（不含 id/character_id/created_at/updated_at）
 STATE_MACHINE_FIELD_IDS: set[str] = {
     # 静态属性
@@ -115,7 +114,7 @@ class CharacterStateMachineMixin:
         if not filtered:
             return
         set_clause = ", ".join(
-            f"{self._sql_identifier(col)} = ?" for col in filtered.keys()
+            f"{self._sql_identifier(col)} = ?" for col in filtered
         )
         params = [*filtered.values(), character_id]
         self.connection.execute(
@@ -137,7 +136,7 @@ class CharacterStateMachineMixin:
         if not filtered:
             return
         set_clause = ", ".join(
-            f"{self._sql_identifier(col)} = ?" for col in filtered.keys()
+            f"{self._sql_identifier(col)} = ?" for col in filtered
         )
         params = [*filtered.values(), character_id]
         self.connection.execute(
@@ -372,7 +371,7 @@ class CharacterStateMachineMixin:
         if not filtered:
             return
         set_clause = ", ".join(
-            f"{self._sql_identifier(col)} = ?" for col in filtered.keys()
+            f"{self._sql_identifier(col)} = ?" for col in filtered
         )
         params = [*filtered.values(), cycle_id]
         self.connection.execute(
@@ -475,7 +474,7 @@ class CharacterStateMachineMixin:
         if not filtered:
             return
         set_clause = ", ".join(
-            f"{self._sql_identifier(col)} = ?" for col in filtered.keys()
+            f"{self._sql_identifier(col)} = ?" for col in filtered
         )
         params = [*filtered.values(), character_id]
         self.connection.execute(

@@ -24,7 +24,6 @@ from lingshu_api.services.ai_settings import (
     load_ai_settings,
     resolve_ai_profile,
     save_ai_settings,
-    validate_profile_ready,
 )
 from novel_app.bookstore import BookstoreStore
 from novel_app.secure_storage import protect_secret, unprotect_secret

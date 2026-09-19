@@ -199,7 +199,7 @@ async def _run_chat(
     except asyncio.CancelledError:
         cancel_event.set()
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         if cancel_event.is_set():
             await manager.send(client_id, {"type": "result", "task_id": task_id, "payload": {"status": "cancelled"}})
         else:

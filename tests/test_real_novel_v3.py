@@ -281,7 +281,7 @@ def run_full_pipeline_test():
     print("灵枢 V3 分析管道 — 真实小说全链路测试")
     print("=" * 80)
     print(f"管道版本: {PIPELINE_V3_VERSION}")
-    print(f"测试用书: 《斗破苍穹》(前3章)")
+    print("测试用书: 《斗破苍穹》(前3章)")
     print()
 
     with TemporaryDirectory() as tmp:

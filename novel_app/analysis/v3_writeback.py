@@ -334,8 +334,8 @@ def _writeback_character(database: Database, book_id: int, fields: dict[str, Any
 
     状态机写回失败时记录日志并降级到旧 supplement 逻辑，不影响主流程。
     """
-    from novel_app.structured_templates.base import merge_character_profile_supplement
     from novel_app.analysis.state_machine_writeback import writeback_to_state_machine
+    from novel_app.structured_templates.base import merge_character_profile_supplement
 
     name = str(fields.get("name") or "").strip()
     if not name:

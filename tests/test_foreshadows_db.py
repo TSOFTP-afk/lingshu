@@ -1,7 +1,6 @@
 """伏笔相关 DB 层测试 — CRUD + sync 逻辑。"""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest

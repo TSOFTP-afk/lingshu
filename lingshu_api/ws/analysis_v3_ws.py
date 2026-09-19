@@ -244,7 +244,7 @@ async def _run_analysis_v3(
 
     async def _forward_progress():
         """将 pipeline 的进度回调转发到 WebSocket，并在长时间无进度时发送心跳保活。"""
-        HEARTBEAT_INTERVAL = 25.0  # 每 25 秒发送一次心跳，防止前端 60s 超时
+        heartbeat_interval = 25.0  # 每 25 秒发送一次心跳，防止前端 60s 超时
         while True:
             try:
                 stage, percent, message = await asyncio.wait_for(
@@ -258,7 +258,7 @@ async def _run_analysis_v3(
             except TimeoutError:
                 # 无真实进度时，若超过心跳间隔则发送保活心跳
                 now = time.monotonic()
-                if now - last_real_progress["time"] >= HEARTBEAT_INTERVAL:
+                if now - last_real_progress["time"] >= heartbeat_interval:
                     last_real_progress["time"] = now
                     hb_stage = last_real_progress["stage"]
                     hb_percent = last_real_progress["percent"]

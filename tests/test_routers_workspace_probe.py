@@ -163,8 +163,8 @@ def test_appearing_characters_filters_by_chapter(client: TestClient) -> None:
     # 创建两个现有人物
     db_provider = client.app.state.workspace_db_provider
     wdb = db_provider.get()
-    char_a_id = wdb.db.create_character(book_id, "林青锋")
-    char_b_id = wdb.db.create_character(book_id, "陈玄")
+    wdb.db.create_character(book_id, "林青锋")
+    wdb.db.create_character(book_id, "陈玄")
     # 林青锋多次出现，陈玄只出现一次
     content = (
         "林青锋踏入大厅，环顾四周。\n"

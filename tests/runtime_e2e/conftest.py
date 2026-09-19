@@ -8,9 +8,9 @@ import pytest
 
 from .helpers import (
     BACKEND_URL,
+    E2E_BOOK_PREFIX,
     FRONTEND_URL,
     ApiClient,
-    E2E_BOOK_PREFIX,
     cleanup_e2e_books,
     is_backend_up,
     is_frontend_up,
@@ -19,7 +19,6 @@ from .helpers import (
     start_frontend_subprocess,
     wait_for,
 )
-
 
 # ================================================================
 # Marker 注册
@@ -176,12 +175,12 @@ def ensure_servers(ensure_backend, frontend_url):
 
 @pytest.fixture(scope="session")
 def auth_token(ensure_backend, backend_url):
-    """用 login(backend_url, "001", "12345678a") 登录，返回 access_token。
+    """用 E2E 账号登录（env LINGSHU_E2E_USER/LINGSHU_E2E_PASS，未设置时自动运行种子脚本），返回 access_token。
 
     登录失败抛异常终止整个 session。
     仅依赖后端服务器（ensure_backend），不依赖前端。
     """
-    token, _user = login(backend_url, "001", "12345678a")
+    token, _user = login(backend_url)
     if not token:
         raise RuntimeError("登录失败：access_token 为空，终止 session")
     return token

@@ -117,20 +117,17 @@ class WorkspaceDB:
                 "analysis_audit_logs", "analysis_llm_cache", "analysis_runs",
             ]
             for table in _analysis_tables_by_book:
-                try:
+                # 表不存在或无 book_id 列，跳过
+                with contextlib.suppress(Exception):
                     conn.execute(f"DELETE FROM {table} WHERE book_id = ?", (book_id,))
-                except Exception:
-                    pass  # 表不存在或无 book_id 列，跳过
             # 清理业务数据
             conn.execute("DELETE FROM chapters WHERE book_id = ?", (book_id,))
             conn.execute("DELETE FROM volumes WHERE book_id = ?", (book_id,))
             conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
             conn.commit()
             # 主动 checkpoint，防止 WAL 文件膨胀拖慢后续操作
-            try:
+            with contextlib.suppress(Exception):
                 conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-            except Exception:
-                pass
             # 失效所有相关缓存
             self._cache.invalidate_on_book_delete(book_id)
 
@@ -525,11 +522,10 @@ class WorkspaceDB:
         return [dict(r) for r in rows]
 
     def create_cycle(self, character_id: int, cycle_data: dict) -> dict[str, Any]:
-        with self._write_lock:
-            # create_cycle 涉及多表写入（cycles + state_machines + snapshots），
-            # 用 transaction 保证原子性，内部各 mixin 方法的 commit 会被抑制
-            with self.db.transaction():
-                result = self.db.create_cycle(character_id, cycle_data)
+        # create_cycle 涉及多表写入（cycles + state_machines + snapshots），
+        # 用 transaction 保证原子性，内部各 mixin 方法的 commit 会被抑制
+        with self._write_lock, self.db.transaction():
+            result = self.db.create_cycle(character_id, cycle_data)
         return result
 
     def list_character_snapshots(self, character_id: int) -> list[dict[str, Any]]:
@@ -623,9 +619,8 @@ class WorkspaceDB:
     def restore_generation_snapshot(self, snapshot_id: int) -> dict[str, Any] | None:
         # restore 涉及多表写入，用 transaction 包裹保证原子性，
         # Mixin 方法内不自行 commit
-        with self._write_lock:
-            with self.db.transaction():
-                result = self.db.restore_generation_snapshot(snapshot_id)
+        with self._write_lock, self.db.transaction():
+            result = self.db.restore_generation_snapshot(snapshot_id)
         return result
 
     # ================================================================

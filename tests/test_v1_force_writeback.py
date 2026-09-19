@@ -1,7 +1,7 @@
 """强制写回 V1 分析结果（user_override=True），绕过 evidence gate。"""
 import json
-import urllib.request
 import urllib.error
+import urllib.request
 
 if __name__ != "__main__":
     # 导入期安全护栏：本文件被 pytest 收集时会在导入期直连服务器执行写回。

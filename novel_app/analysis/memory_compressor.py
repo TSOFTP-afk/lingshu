@@ -5,8 +5,8 @@ import logging
 import threading
 import time
 from collections import defaultdict
-from collections.abc import Iterable
-from typing import Any, Callable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from novel_app.analysis.memory_classifier import MemoryClassifier
 from novel_app.analysis.schemas_v3 import stable_hash

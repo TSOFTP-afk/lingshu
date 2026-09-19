@@ -6,7 +6,7 @@
 
 为长篇生成提供可检索、可注入 prompt 的技能索引。
 """
-from novel_app.writing_techniques.loader import WritingTechniqueLoader
 from novel_app.writing_techniques.indexer import TechniqueIndexer
+from novel_app.writing_techniques.loader import WritingTechniqueLoader
 
 __all__ = ["WritingTechniqueLoader", "TechniqueIndexer"]

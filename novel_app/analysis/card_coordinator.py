@@ -169,7 +169,7 @@ class CardCoordinator:
                     draft_results[idx] = (idx, draft)
 
         # ── 第三步：串行执行 DB 写入（有依赖关系：supersede → create → dependencies） ──
-        for i, (idx, draft) in enumerate(draft_results):
+        for _i, (idx, draft) in enumerate(draft_results):
             if draft is None:
                 continue
             event, payload, event_facts, _entity = event_tasks[idx]
@@ -200,7 +200,7 @@ class CardCoordinator:
         cards = [dict(row) for row in self.store.list_cards(int(run_id))]
         active_cards = [card for card in cards if str(card.get("status") or "") != "superseded"]
         if use_ai:
-            if ai_count > 0 and fallback_count == 0:
+            if ai_count > 0 and fallback_count == 0:  # noqa: SIM108 — 外层还依赖 use_ai 分支，ruff 建议的三元会丢分支
                 engine = "ai"
             else:
                 engine = "rule_fallback"

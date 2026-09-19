@@ -34,10 +34,7 @@ from lingshu_api.services.db_bridge import WorkspaceDBProvider, reset_default_wo
 from novel_app.analysis.diff_apply import build_drafts_with_diffs
 from novel_app.analysis.pipeline import PIPELINE_VERSION
 from novel_app.analysis.store import AnalysisStore
-from novel_app.bookstore import BookstoreStore
-from novel_app.database import Database
 from tests.fixtures.test_novel import get_test_novel
-
 
 # ── 测试账号 ──────────────────────────────────────────────────────
 _USER_A = "v1_verify_author_a"
@@ -311,7 +308,7 @@ def test_v1_writeback_bookdata_verify() -> None:
                 elif resp.status_code == 503:
                     # AI 不可用 — 记录 WARN，使用 mock 方式测试写回
                     results["v1_oneshot_trigger"] = (
-                        f"WARN (503 - AI 不可用，使用 mock 方式测试写回)"
+                        "WARN (503 - AI 不可用，使用 mock 方式测试写回)"
                     )
                     run_id = None
                 else:

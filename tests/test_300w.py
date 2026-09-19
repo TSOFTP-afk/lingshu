@@ -1,17 +1,21 @@
 """300万字长篇测试 — AI增强 (并发300, 窗口20K)。"""
 from __future__ import annotations
 
-import pytest
-
-import contextlib, json, os, re, sys, time
+import contextlib
+import os
+import re
+import sys
+import time
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3
+from novel_app.ai.service import SimpleAIService
 from novel_app.analysis.ai_provider import AIAnalysisProvider
 from novel_app.analysis.llm_cache import LLMCache
-from novel_app.ai.service import SimpleAIService
+from novel_app.analysis.pipeline_v3 import AnalysisPipelineV3
 from novel_app.database import Database
 
 NOVEL_PATH = os.environ.get("LINGSHU_TEST_NOVEL_PATH", "")
@@ -34,7 +38,7 @@ SECTION_HEAD_RE = re.compile(r"^第[一二三四五六七八九十百千\d]{1,4}
 
 def main():
     print("=" * 60)
-    print(f"《蛊真人》300万字测试 (并发300, 窗口20K)")
+    print("《蛊真人》300万字测试 (并发300, 窗口20K)")
     print("=" * 60)
 
     t0 = time.time()
@@ -84,7 +88,7 @@ def main():
         (result.run_id,),
     ).fetchall()
 
-    print(f"\n  ═══ 结果 ═══")
+    print("\n  ═══ 结果 ═══")
     print(f"  耗时: {elapsed:.1f}s ({elapsed/60:.1f}min)")
     print(f"  速度: {total/elapsed:,.0f} 字/秒")
     print(f"  API调用: {result.meta.get('ai_call_count','?')} 次")
@@ -94,7 +98,7 @@ def main():
         print(f"  后处理: 合并{result.meta['card_post_merges']} "
               f"删除{result.meta.get('card_post_deletes',0)}")
 
-    print(f"\n  卡片分布:")
+    print("\n  卡片分布:")
     for row in cards:
         print(f"    {row['card_type']}: {row['cnt']}")
 
@@ -116,7 +120,7 @@ def main():
            ORDER BY CAST(fc AS INTEGER) DESC LIMIT 20""",
         (result.run_id,),
     ).fetchall()
-    print(f"\n  Top 20 人物:")
+    print("\n  Top 20 人物:")
     for r in top:
         print(f"    {r['name']:20s} {r['fc']} 条")
 

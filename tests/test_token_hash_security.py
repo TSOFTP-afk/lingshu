@@ -21,7 +21,6 @@ from lingshu_api.main import create_app
 from novel_app.bookstore import BookstoreStore
 from novel_app.bookstore.models import initialize_database
 
-
 USERNAME = "token_sec_author"
 PASSWORD = "test_pass_123456"
 

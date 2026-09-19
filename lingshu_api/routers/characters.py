@@ -250,9 +250,9 @@ def update_state_machine(
         return {"item": updated}
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         _cloud_logger.exception("更新状态机失败 character_id=%s", character_id)
-        raise HTTPException(status_code=500, detail="更新状态机失败")
+        raise HTTPException(status_code=500, detail="更新状态机失败") from exc
 
 
 @router.get("/characters/{character_id}/cycles")
@@ -285,9 +285,9 @@ def create_cycle(
         return {"item": result}
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         _cloud_logger.exception("创建循环日志失败 character_id=%s", character_id)
-        raise HTTPException(status_code=500, detail="创建循环日志失败")
+        raise HTTPException(status_code=500, detail="创建循环日志失败") from exc
 
 
 @router.get("/characters/{character_id}/snapshots")
@@ -325,6 +325,6 @@ def create_character_snapshot(
         return {"item": item}
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         _cloud_logger.exception("创建快照存档失败 character_id=%s", character_id)
-        raise HTTPException(status_code=500, detail="创建快照存档失败")
+        raise HTTPException(status_code=500, detail="创建快照存档失败") from exc

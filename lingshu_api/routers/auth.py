@@ -2,6 +2,7 @@
 认证相关路由 — 登录、注册、设备管理。
 """
 import asyncio
+import contextlib
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -120,10 +121,8 @@ async def register(
                 }
             raise
         # 将范例小说写入 novels.db（前端 /api/workspace/books 查此库）
-        try:
+        with contextlib.suppress(Exception):  # noqa: BLE001 — 不阻断注册主流程
             _seed_sample_to_workspace(workspace_db, store, int(user["id"]))
-        except Exception:  # noqa: BLE001 — 不阻断注册主流程
-            pass
         token = store.login_user(payload.username, payload.password)
         return {"access_token": token, "token_type": "bearer", "user": user}
     return await asyncio.to_thread(_sync)

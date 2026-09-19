@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from .helpers import ApiClient, E2E_BOOK_PREFIX, E2EReport, cleanup_e2e_books, resolve_probe_results
+from .helpers import ApiClient, E2EReport, cleanup_e2e_books, resolve_probe_results
 
 report = E2EReport()
 

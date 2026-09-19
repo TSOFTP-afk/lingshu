@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from novel_app.ai.protocols import AIGenerationProtocol
-
 
 class GenerationService:
     """独立的 AI 生成服务，包装 AIGenerationMixin 的功能

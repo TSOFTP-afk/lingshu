@@ -259,8 +259,8 @@ class CharactersMixin:
             return
         from novel_app.structured_templates.base import (
             character_profile_form_to_markdown,
-            normalize_character_profile_form,
             character_profile_schema_key,
+            normalize_character_profile_form,
         )
         schema_key = character_profile_schema_key(role, form.get("schema", ""))
         form = normalize_character_profile_form(form, name, role, schema_key)

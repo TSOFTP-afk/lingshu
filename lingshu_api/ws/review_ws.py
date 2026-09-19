@@ -15,7 +15,7 @@ from threading import Event
 from fastapi import APIRouter, HTTPException, WebSocket
 
 from lingshu_api.dependencies import check_chapter_owner
-from lingshu_api.services.db_bridge import WorkspaceDB, get_workspace_db
+from lingshu_api.services.db_bridge import get_workspace_db
 from lingshu_api.ws.connection import ConnectionManager, authenticate_ws, get_ws_manager
 from lingshu_api.ws.generation import _create_ai_service, _workspace_db_from_app
 from lingshu_api.ws.tasks import get_ws_task_registry
@@ -160,7 +160,7 @@ async def _run_review(manager, client_id, task_id, book_id, chapter_id, content,
     except asyncio.CancelledError:
         cancel_event.set()
         raise
-    except Exception as e:
+    except Exception:
         if cancel_event.is_set():
             await manager.send(client_id, {"type": "result", "task_id": task_id, "payload": {"status": "cancelled"}})
         else:

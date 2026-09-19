@@ -28,7 +28,8 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from novel_app.db.redis_client import get_redis_client
 
@@ -174,7 +175,7 @@ class CacheManager:
 
     def invalidate_chapters_for_book(self, book_id: int) -> int:
         """失效某本书所有章节缓存（章节编辑后调用）。"""
-        return self._delete_pattern(f"chapter:*")
+        return self._delete_pattern("chapter:*")
         # 注意：chapter payload 里含 book_id，但 key 不含，故需全量扫描
         # 实际章节编辑是单章级别，invalidate_chapter(chapter_id) 即可
         # 此方法仅在 delete_book 等批量场景使用

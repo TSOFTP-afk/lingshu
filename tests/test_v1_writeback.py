@@ -43,7 +43,7 @@ async def main():
         headers = {"Authorization": f"Bearer {token}"}
 
         # 2. 设置 AI 配置
-        print(f"\n=== 设置 AI 配置 ===")
+        print("\n=== 设置 AI 配置 ===")
         ai_config = {
             "remote_enabled": True,
             "provider": "deepseek",
@@ -64,7 +64,7 @@ async def main():
             print(f"  PUT /api/settings/ai: {r.status}")
 
         # 3. 获取范例书籍
-        print(f"\n=== 获取范例书籍 ===")
+        print("\n=== 获取范例书籍 ===")
         async with session.get(f"{BASE}/api/workspace/books", headers=headers) as r:
             data = await r.json()
             items = data.get("items", [])
@@ -75,11 +75,11 @@ async def main():
             print(f"  book_id={book_id} title={items[0].get('title', '')[:30]}")
 
         # 4. 记录写回前状态
-        print(f"\n=== 写回前状态 ===")
+        print("\n=== 写回前状态 ===")
         before = await snapshot(session, headers, book_id)
 
         # 5. V1 一次性分析
-        print(f"\n=== V1 一次性分析 (可能需要 5-15 分钟) ===")
+        print("\n=== V1 一次性分析 (可能需要 5-15 分钟) ===")
         start = time.time()
         run_id = 0
         try:
@@ -106,7 +106,7 @@ async def main():
             return
 
         # 6. 查看卡片列表
-        print(f"\n=== 分析卡片列表 ===")
+        print("\n=== 分析卡片列表 ===")
         async with session.get(f"{BASE}/api/workspace/analysis/runs/{run_id}/cards", headers=headers) as r:
             data = await r.json()
             cards = data.get("items", [])
@@ -151,11 +151,11 @@ async def main():
             print(f"  [{elapsed}s] 写回失败: {e}")
 
         # 8. 记录写回后状态
-        print(f"\n=== 写回后状态 ===")
+        print("\n=== 写回后状态 ===")
         after = await snapshot(session, headers, book_id)
 
         # 9. 对比写回前后
-        print(f"\n=== 写回前后对比 ===")
+        print("\n=== 写回前后对比 ===")
         compare("characters", before.get("characters", []), after.get("characters", []))
         compare("world_entries", before.get("world_entries", []), after.get("world_entries", []))
         compare("outline_text", before.get("outline_text", ""), after.get("outline_text", ""))

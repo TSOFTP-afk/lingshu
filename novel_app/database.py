@@ -77,7 +77,7 @@ class ThreadSafeCursor:
 
 
 class ThreadSafeConnection:
-    def __init__(self, connection: sqlite3.Connection, lock: RLock, registry: "ThreadLocalConnections | None" = None) -> None:
+    def __init__(self, connection: sqlite3.Connection, lock: RLock, registry: ThreadLocalConnections | None = None) -> None:
         self._connection = connection
         self._lock = lock
         self._registry = registry
@@ -200,7 +200,7 @@ class ThreadLocalConnections:
                         f"      {ln}" for ln in conn._txn_origin.strip().splitlines()
                     )
                 lines.append(line)
-            return "数据库连接注册表（共 %d 根）:\n" % len(self._all) + "\n".join(lines)
+            return f"数据库连接注册表（共 {len(self._all)} 根）:\n" + "\n".join(lines)
 
     def _new_connection(self) -> ThreadSafeConnection:
         raw = sqlite3.connect(self._db_path, check_same_thread=False)

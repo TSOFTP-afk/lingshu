@@ -97,9 +97,9 @@ async def _handle_file_import(
     suffix = Path(file.filename or "import.txt").suffix.lower()
 
     # 文件扩展名白名单校验
-    _ALLOWED_IMPORT_EXTENSIONS = {".txt", ".md", ".docx", ".epub"}
-    if suffix not in _ALLOWED_IMPORT_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {suffix}，仅允许 {', '.join(sorted(_ALLOWED_IMPORT_EXTENSIONS))}")
+    allowed_import_extensions = {".txt", ".md", ".docx", ".epub"}
+    if suffix not in allowed_import_extensions:
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {suffix}，仅允许 {', '.join(sorted(allowed_import_extensions))}")
 
     # 解码文本
     try:
@@ -268,7 +268,7 @@ async def _parse_large_text_with_ai_splits(
 
 
 def _reparse_chapters_with_ai(
-    ai_service: "SimpleAIService",
+    ai_service: SimpleAIService,
     chapters: list[ParsedChapter],
     issue: dict[str, int],
 ) -> list[ParsedChapter]:
