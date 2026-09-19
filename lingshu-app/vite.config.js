@@ -21,6 +21,14 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./tests/setup.js'],
     css: true,
+    // element-plus >= 2.10 的 ESM 入口直接 import .css，外置（externalized）时
+    // Node 无法加载，导致所有引用 element-plus 的组件测试套件整体失败。
+    // 内联后由 Vite 管道处理其 CSS 导入。
+    server: {
+      deps: {
+        inline: ['element-plus', '@element-plus/icons-vue'],
+      },
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

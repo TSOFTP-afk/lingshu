@@ -1,0 +1,78 @@
+/* AnalysisV1Panel 专属样式（LEGACY：V1 一次性管线，仅握手兼容保留）。
+   注意：scoped 语义下子组件无法继承父组件样式，此处按子组件模板所需
+   复制了共享类（run-item / v3-card-* / detail-* / dialog-footer 等），
+   与 analysis-tab.css 保持同步。 */
+.empty-hint { color: var(--text-placeholder); font-size: 12px; padding: 16px 0; text-align: center; }
+.result-section { margin-top: 12px; }
+.result-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
+.run-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  background: var(--bg-secondary);
+}
+.run-item.active { border-color: var(--accent-primary); }
+.run-title { font-size: 12px; color: var(--text-primary); line-height: 1.4; }
+.run-meta { font-size: 11px; color: var(--text-placeholder); margin-top: 2px; }
+.run-item-main { min-width: 0; flex: 1; }
+.run-failed { border-color: var(--el-color-danger-light-5, #fab6b6); background: var(--el-color-danger-light-9, #fef0f0); }
+.run-status-failed { color: var(--el-color-danger, #f56c6c); font-weight: 600; }
+.run-error { font-size: 11px; color: var(--el-color-danger, #f56c6c); margin-top: 4px; line-height: 1.4; word-break: break-all; }
+.run-failure-panel { border: 1px solid var(--el-color-danger-light-5, #fab6b6); background: var(--el-color-danger-light-9, #fef0f0); border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+.run-failure-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.run-failure-title { font-size: 13px; font-weight: 600; color: var(--el-color-danger, #f56c6c); }
+.run-failure-body { font-size: 12px; color: var(--text-primary); line-height: 1.6; word-break: break-all; }
+.run-failure-time { font-size: 11px; color: var(--text-placeholder); margin-top: 6px; }
+.v3-card-item {
+  padding: 8px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.v3-card-item:hover {
+  border-color: var(--el-color-primary-light-3);
+}
+.v3-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.v3-card-title { min-width: 0; font-size: 12px; font-weight: 600; color: var(--text-primary); word-break: break-word; }
+.v3-card-tags { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.v3-card-meta { font-size: 11px; color: var(--text-placeholder); line-height: 1.5; }
+.v3-card-summary {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  word-break: break-word;
+}
+/* 卡片详情弹窗（V1） */
+.detail-section { margin-bottom: 16px; }
+.detail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.detail-label { font-weight: 600; font-size: 13px; }
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+.detail-field { display: flex; flex-direction: column; gap: 2px; }
+.detail-key { font-size: 11px; color: var(--text-placeholder); }
+.detail-value { font-size: 13px; }
+.detail-value.mono { font-family: monospace; font-size: 12px; }
+.detail-summary { font-size: 13px; line-height: 1.6; color: var(--text-secondary); background: var(--el-fill-color-lighter); padding: 8px 12px; border-radius: 4px; }
+.dialog-footer { display: flex; justify-content: flex-end; gap: 8px; }
+.v1-payload-preview {
+  margin: 0;
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 400px;
+  overflow-y: auto;
+  background: var(--el-fill-color-lighter);
+  border-radius: 4px;
+  font-family: monospace;
+}

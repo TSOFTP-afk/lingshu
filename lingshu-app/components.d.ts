@@ -13,6 +13,7 @@ declare module 'vue' {
     AiSettingsPanel: typeof import('./src/components/dialogs/AiSettingsPanel.vue')['default']
     AiSettingsSection: typeof import('./src/components/settings/AiSettingsSection.vue')['default']
     AnalysisTab: typeof import('./src/components/drawer/AnalysisTab.vue')['default']
+    AnalysisV1Panel: typeof import('./src/components/drawer/AnalysisV1Panel.vue')['default']
     AppLayout: typeof import('./src/components/layout/AppLayout.vue')['default']
     BookEntryDialog: typeof import('./src/components/dialogs/BookEntryDialog.vue')['default']
     ChapterEditDialog: typeof import('./src/components/workspace/ChapterEditDialog.vue')['default']
