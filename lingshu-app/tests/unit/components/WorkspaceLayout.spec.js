@@ -5,6 +5,14 @@ import ElementPlus from 'element-plus';
 import { Splitpanes, Pane } from 'splitpanes';
 import WorkspaceLayout from '../../../src/components/workspace/WorkspaceLayout.vue';
 
+// WorkspaceLayout 依赖 vue-router（route.params/query 与 router.push），
+// 组件测试环境下用轻量 mock 提供路由上下文
+const routeMock = vi.hoisted(() => ({ params: {}, query: {} }));
+vi.mock('vue-router', () => ({
+  useRoute: () => routeMock,
+  useRouter: () => ({ push: vi.fn().mockResolvedValue(undefined) }),
+}));
+
 // Stub child components that have complex dependencies
 const globalStubs = {
   LibraryPanel: {

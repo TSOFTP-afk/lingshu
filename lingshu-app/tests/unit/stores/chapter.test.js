@@ -92,7 +92,6 @@ describe('useChapterStore', () => {
 
       expect(api.post).toHaveBeenCalledWith('/workspace/books/1/chapters', {
         title: '新章节',
-        book_id: 1,
       });
       expect(store.chapters).toContainEqual(newChapter);
       expect(result).toEqual(newChapter);
@@ -107,7 +106,6 @@ describe('useChapterStore', () => {
 
       expect(api.post).toHaveBeenCalledWith('/workspace/volumes/10/chapters', {
         title: '新章节',
-        book_id: 1,
       });
       expect(result).toEqual(newChapter);
     });

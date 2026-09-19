@@ -77,3 +77,6 @@ htmlcov/
 # Playwright 运行产物
 test-results/
 playwright-report/
+
+# vitest coverage 报告产物
+coverage/

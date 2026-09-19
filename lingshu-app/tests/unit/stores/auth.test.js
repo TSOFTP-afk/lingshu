@@ -19,6 +19,18 @@ vi.mock('../../../src/utils/api', () => ({
   setAuthToken: vi.fn(),
   buildWsUrl: vi.fn(),
   sendWsAuth: vi.fn(),
+  // auth store init() 会等待 token 就绪 Promise
+  tokenReady: Promise.resolve(),
+}));
+
+// requireAuth 已演进为通过事件总线派发 lingshu:open-login（不再用 document.dispatchEvent）
+const { emittedEvents } = vi.hoisted(() => ({ emittedEvents: [] }));
+vi.mock('../../../src/composables/useEventBus', () => ({
+  useEventBus: () => ({
+    on: vi.fn(),
+    off: vi.fn(),
+    emit: (event, payload) => emittedEvents.push({ event, payload }),
+  }),
 }));
 
 vi.mock('../../../src/stores/cloud', () => ({
@@ -34,6 +46,7 @@ describe('useAuthStore', () => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
     getAuthToken.mockReturnValue('');
+    emittedEvents.length = 0;
   });
 
   describe('初始状态', () => {
@@ -287,14 +300,14 @@ describe('useAuthStore', () => {
       expect(store.requireAuth()).toBe(true);
     });
 
-    it('未登录时派发 lingshu:open-login 事件并返回 false', () => {
+    it('未登录时通过事件总线派发 lingshu:open-login 并返回 false', () => {
       const store = useAuthStore();
       store.token = '';
 
       const result = store.requireAuth();
 
       expect(result).toBe(false);
-      expect(document.dispatchEvent).toHaveBeenCalled();
+      expect(emittedEvents.map((item) => item.event)).toContain('lingshu:open-login');
     });
   });
 

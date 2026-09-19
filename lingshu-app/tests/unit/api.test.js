@@ -87,12 +87,13 @@ describe('api.js', () => {
   //  1. API_BASE_URL & WS_BASE_URL defaults
   // ----------------------------------------------------------
   describe('API_BASE_URL and WS_BASE_URL', () => {
+    // 现行为：无 env / electron 桥时回退到 same-origin（由 vite dev proxy 转发到后端）
     it('should have default API_BASE_URL when no env or electron bridge', () => {
-      expect(apiModule.API_BASE_URL).toBe('http://127.0.0.1:8787/api');
+      expect(apiModule.API_BASE_URL).toBe(`${location.origin}/api`);
     });
 
     it('should have default WS_BASE_URL when no env or electron bridge', () => {
-      expect(apiModule.WS_BASE_URL).toBe('ws://127.0.0.1:8787/ws');
+      expect(apiModule.WS_BASE_URL).toBe(`ws://${location.host}/ws`);
     });
   });
 
@@ -278,7 +279,7 @@ describe('api.js', () => {
   // ----------------------------------------------------------
   describe('buildWsUrl(path)', () => {
     it('accepts absolute ws:// URLs from the configured origin', () => {
-      expect(apiModule.buildWsUrl('ws://127.0.0.1:8787/ws/socket')).toBe('ws://127.0.0.1:8787/ws/socket');
+      expect(apiModule.buildWsUrl(`ws://${location.host}/ws/socket`)).toBe(`ws://${location.host}/ws/socket`);
     });
 
     it('rejects absolute WebSocket URLs from other origins', () => {
@@ -298,15 +299,15 @@ describe('api.js', () => {
     });
 
     it('prepends WS_BASE_URL when path is relative', () => {
-      expect(apiModule.buildWsUrl('/chat')).toBe('ws://127.0.0.1:8787/ws/chat');
+      expect(apiModule.buildWsUrl('/chat')).toBe(`ws://${location.host}/ws/chat`);
     });
 
     it('normalizes relative path without leading slash', () => {
-      expect(apiModule.buildWsUrl('chat')).toBe('ws://127.0.0.1:8787/ws/chat');
+      expect(apiModule.buildWsUrl('chat')).toBe(`ws://${location.host}/ws/chat`);
     });
 
     it('does not duplicate /ws when path already includes it', () => {
-      expect(apiModule.buildWsUrl('/ws/chat')).toBe('ws://127.0.0.1:8787/ws/chat');
+      expect(apiModule.buildWsUrl('/ws/chat')).toBe(`ws://${location.host}/ws/chat`);
     });
   });
 

@@ -109,9 +109,11 @@ describe('ContentEditor', () => {
     expect(wrapper.find('.ai-probability').text()).toContain('45%');
   });
 
-  it('renders line markers for content', () => {
+  it('renders line markers for content', async () => {
     const wrapper = createWrapper({ content: 'Line 1\nLine 2' });
-    const markers = wrapper.findAll('.line-marker-row');
-    expect(markers.length).toBe(2);
+    // 行号层已演进为视觉行实现：镜像层在 nextTick 后测量软换行再渲染行号
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('.line-marker-row').length).toBe(2);
+    });
   });
 });

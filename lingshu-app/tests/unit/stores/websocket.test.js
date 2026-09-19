@@ -12,7 +12,8 @@ vi.mock('../../../src/utils/api', () => ({
   getAuthToken: vi.fn(() => 'test-token'),
   setAuthToken: vi.fn(),
   buildWsUrl: vi.fn((path) => `ws://localhost:8787/ws${path}`),
-  sendWsAuth: vi.fn(),
+  // store 会在 onopen 后检查 sendWsAuth 返回的 token，为空则视为未认证并主动关闭
+  sendWsAuth: vi.fn(() => 'test-token'),
 }));
 
 import { buildWsUrl, sendWsAuth } from '../../../src/utils/api';

@@ -32,6 +32,7 @@ function createWrapper(props = {}) {
 describe('DrawerPanel', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+    localStorage.clear();
   });
 
   it('renders without errors', () => {
@@ -56,31 +57,23 @@ describe('DrawerPanel', () => {
   });
 
   it('shows shortcuts tab when selectionKind is book', async () => {
+    // shortcuts 独立 tab 已随阶段重构移除；现行为是 selectionKind 变化时自动切换标签页
     const wrapper = createWrapper({ selectionKind: 'book' });
-    expect(wrapper.vm.showShortcuts).toBe(true);
-    const tabPanes = wrapper.findAllComponents({ name: 'ElTabPane' });
-    // Should have 8 tabs with shortcuts
-    expect(tabPanes.length).toBe(8);
-  });
-
-  it('hides shortcuts tab when selectionKind is not book', () => {
-    const wrapper = createWrapper({ selectionKind: 'chapter' });
-    expect(wrapper.vm.showShortcuts).toBe(false);
-  });
-
-  it('resets to overview tab when active tab becomes invalid', async () => {
-    const wrapper = createWrapper({ selectionKind: 'book' });
-    wrapper.vm.activeTab = 'shortcuts';
     await wrapper.vm.$nextTick();
-    // Now change selectionKind to remove shortcuts tab
-    await wrapper.setProps({ selectionKind: 'chapter' });
     expect(wrapper.vm.activeTab).toBe('overview');
+  });
+
+  it('switches to analysis tab when selectionKind changes to chapter', async () => {
+    // watch 无 immediate：初始 prop 不触发，仅在 selectionKind 运行时变化时切换
+    const wrapper = createWrapper();
+    await wrapper.setProps({ selectionKind: 'chapter' });
+    expect(wrapper.vm.activeTab).toBe('analysis');
   });
 
   it('switches tab via onOpenDrawerTab handler', async () => {
     const wrapper = createWrapper();
-    // Call the handler directly since document.dispatchEvent is mocked in setup.js
-    wrapper.vm.onOpenDrawerTab({ detail: { name: 'characters' } });
+    // 事件契约已演进为 event bus payload { name }（不再走 document CustomEvent 的 detail 包裹）
+    wrapper.vm.onOpenDrawerTab({ name: 'characters' });
     await wrapper.vm.$nextTick();
     expect(wrapper.vm.activeTab).toBe('characters');
   });
