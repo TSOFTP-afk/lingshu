@@ -39,8 +39,8 @@ class WorkspaceDB:
     def __init__(self, db_path: Path | None = None) -> None:
         self._write_lock = threading.Lock()
         self.db = Database(db_path or _get_db_path())
-        # Database.__init__ 已设置 busy_timeout/WAL/foreign_keys，
-        # 此处仅执行 schema 迁移（幂等）
+        # Database 的 PRAGMA（busy_timeout/WAL/foreign_keys）在线程本地连接
+        # 创建时逐根设置；此处仅执行 schema 迁移（幂等）
         self.db.initialize()
         # Redis 缓存层（Redis 不可用时所有方法优雅降级为 no-op）
         self._cache = CacheManager()

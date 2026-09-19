@@ -5,7 +5,7 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
-from threading import RLock
+from threading import Lock, RLock, local
 from typing import Any
 
 from novel_app.db.analysis import AnalysisMixin
@@ -76,10 +76,14 @@ class ThreadSafeCursor:
 
 
 class ThreadSafeConnection:
-    def __init__(self, connection: sqlite3.Connection, lock: RLock) -> None:
+    def __init__(self, connection: sqlite3.Connection, lock: RLock, registry: "ThreadLocalConnections | None" = None) -> None:
         self._connection = connection
         self._lock = lock
-        self._commit_suppressed: bool = False
+        self._registry = registry
+        self._last_sql = ""
+        self._txn_origin = ""
+        # 事务抑制计数（支持 transaction() 嵌套：内层退出后外层仍处于抑制态）
+        self._commit_suppressed: int = 0
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._connection, name)
@@ -95,9 +99,34 @@ class ThreadSafeConnection:
         finally:
             self._lock.release()
 
+    def _dump_lock_holders(self) -> str:
+        if self._registry is None:
+            return ""
+        try:
+            return "\n" + self._registry.describe_pending_transactions()
+        except Exception:  # pragma: no cover - 诊断信息失败不影响原错误
+            return ""
+
     def execute(self, *args: Any, **kwargs: Any) -> ThreadSafeCursor:
+        self._last_sql = " ".join(str(args[0]).split())[:120] if args else ""
+        if (
+            args
+            and not self.in_transaction
+            and str(args[0]).lstrip()[:6].upper() in ("INSERT", "UPDATE", "DELETE", "REPLAC")
+        ):
+            # 写语句首次开启事务时记录调用栈，用于定位"写了不提交"的泄漏点
+            import traceback as _tb
+
+            self._txn_origin = "".join(_tb.format_stack(limit=-14))
         with self._lock:
-            return ThreadSafeCursor(self._connection.execute(*args, **kwargs), self._lock)
+            try:
+                return ThreadSafeCursor(self._connection.execute(*args, **kwargs), self._lock)
+            except sqlite3.OperationalError as exc:
+                if "locked" in str(exc):
+                    raise sqlite3.OperationalError(
+                        f"{exc} — 当前连接 last_sql={self._last_sql!r}{self._dump_lock_holders()}"
+                    ) from None
+                raise
 
     def executemany(self, *args: Any, **kwargs: Any) -> ThreadSafeCursor:
         with self._lock:
@@ -120,6 +149,79 @@ class ThreadSafeConnection:
     def close(self) -> None:
         with self._lock:
             self._connection.close()
+
+
+class ThreadLocalConnections:
+    """每线程独立 SQLite 连接注册表。
+
+    旧实现是全 Database 共享一根 check_same_thread=False 的连接：事务抑制
+    标志跨线程共享，一个线程 transaction() 期间其他线程的写入会被并进同一
+    事务，commit/rollback 会波及全部线程。改为每线程一根连接后，事务边界
+    天然线程隔离；连接在线程首次访问时惰性创建并复用（FastAPI 的线程池
+    线程会长期存活，连接数上界 = 线程池大小）。
+
+    check_same_thread 保持 False：连接按构造只被属主线程使用，但
+    close_all() 可能从主线程关闭工作线程创建的连接（测试临时目录清理、
+    应用退出路径都依赖这一点）。
+    """
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self._local = local()
+        self._all: list[ThreadSafeConnection] = []
+        self._registry_lock = Lock()
+        self._closed = False
+
+    def get(self) -> ThreadSafeConnection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._new_connection()
+            self._local.conn = conn
+            with self._registry_lock:
+                if not self._closed:
+                    self._all.append(conn)
+        return conn
+
+    def describe_pending_transactions(self) -> str:
+        """诊断用：列出所有连接的未决事务、起源栈与最后一条 SQL。"""
+        with self._registry_lock:
+            lines = []
+            for conn in self._all:
+                try:
+                    pending = conn.in_transaction
+                except Exception:
+                    pending = "?"
+                line = f"  in_txn={pending} suppressed={conn._commit_suppressed} last_sql={conn._last_sql!r}"
+                if pending and conn._txn_origin:
+                    line += "\n    事务起源:\n" + "\n".join(
+                        f"      {ln}" for ln in conn._txn_origin.strip().splitlines()
+                    )
+                lines.append(line)
+            return "数据库连接注册表（共 %d 根）:\n" % len(self._all) + "\n".join(lines)
+
+    def _new_connection(self) -> ThreadSafeConnection:
+        raw = sqlite3.connect(self._db_path, check_same_thread=False)
+        raw.row_factory = sqlite3.Row
+        # 注册 cjk_unigram 函数，供 FTS5 触发器在 SQL 中调用
+        raw.create_function("cjk_unigram", 1, cjk_unigram)
+        wrapper = ThreadSafeConnection(raw, RLock(), registry=self)
+        # busy_timeout/foreign_keys/synchronous 均为连接级设置，每根连接都要设；
+        # journal_mode=WAL 是库级持久属性，重复设置无害。
+        # busy_timeout 必须在 migrations 之前设置，避免新连接初始化时
+        # 遇到正在运行的分析管线持有写锁而立即失败 (database is locked)
+        wrapper.execute("PRAGMA busy_timeout = 10000")
+        wrapper.execute("PRAGMA foreign_keys = ON")
+        wrapper.execute("PRAGMA journal_mode = WAL")
+        wrapper.execute("PRAGMA synchronous = NORMAL")
+        return wrapper
+
+    def close_all(self) -> None:
+        with self._registry_lock:
+            self._closed = True
+            for conn in self._all:
+                with contextlib.suppress(Exception):
+                    conn.close()
+            self._all.clear()
 
 
 class Database(
@@ -171,23 +273,16 @@ class Database(
         self.exports_dir.mkdir(parents=True, exist_ok=True)
 
         self.db_path = db_path or self.data_dir / "novels.db"
-        raw_connection = sqlite3.connect(self.db_path, check_same_thread=False)
-        raw_connection.row_factory = sqlite3.Row
-        # 注册 cjk_unigram 函数，供 FTS5 触发器在 SQL 中调用
-        # 必须在 migrations 之前注册，否则触发器执行时会找不到函数
-        raw_connection.create_function("cjk_unigram", 1, cjk_unigram)
-        self._connection_lock = RLock()
-        self.connection = ThreadSafeConnection(raw_connection, self._connection_lock)
-        # busy_timeout 必须在 migrations 之前设置，避免新连接初始化时
-        # 遇到正在运行的分析管线持有写锁而立即失败 (database is locked)
-        self.connection.execute("PRAGMA busy_timeout = 10000")
-        self.connection.execute("PRAGMA foreign_keys = ON")
-        self.connection.execute("PRAGMA journal_mode = WAL")
-        self.connection.execute("PRAGMA synchronous = NORMAL")
+        self._connections = ThreadLocalConnections(self.db_path)
+
+    @property
+    def connection(self) -> ThreadSafeConnection:
+        """当前线程的 SQLite 连接（惰性创建，线程内复用）。"""
+        return self._connections.get()
 
     def close(self) -> None:
         with contextlib.suppress(Exception):
-            self.connection.close()
+            self._connections.close_all()
 
     def __enter__(self) -> Database:
         return self
@@ -197,21 +292,26 @@ class Database(
 
     @contextlib.contextmanager
     def transaction(self):
-        """将多个写操作包裹在单个事务中，失败时自动回滚。
+        """将当前线程的多个写操作包裹在单个事务中，失败时自动回滚。
 
-        在事务期间，各 mixin 方法的 commit() 调用会被抑制，
-        退出上下文时统一 commit 或 rollback。
+        在事务期间，各 mixin 方法的 commit() 调用会被抑制（按计数支持嵌套），
+        退出上下文时统一 commit 或 rollback。连接是线程本地的，事务边界
+        不会波及其他线程的写入。
         """
         conn = self.connection
-        conn._commit_suppressed = True
+        if conn.in_transaction:
+            # 防御：线程连接被上一个请求遗留的未决事务污染时先回滚，
+            # 避免本事务的失败回滚牵连无关写入
+            conn.rollback()
+        conn._commit_suppressed += 1
         try:
             yield
-            conn._connection.commit()
         except Exception:
-            conn._connection.rollback()
+            conn.rollback()
+            conn._commit_suppressed -= 1
             raise
-        finally:
-            conn._commit_suppressed = False
+        conn._commit_suppressed -= 1
+        conn.commit()
 
 
 __all__ = ["ALL_VOLUMES", "UNASSIGNED_VOLUMES", "Database"]

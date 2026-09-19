@@ -42,8 +42,7 @@ PREEXISTING_FAILURES: dict[str, tuple[str, str]] = {
     # ── 簇 C：RAG / 数据层 ──
     "tests/test_rag_modules.py::TestChapterRetriever::test_remove_book_reference_source_removes_vector_and_bm25_records": ("RAG 清理", "删参考源未同步清 vector/bm25"),
     "test_database_extensions.py::DatabaseExtensionTests::test_v2_epoch_discards_legacy_structured_data_once": ("数据层", "v2 epoch 遗留数据清理语义漂移"),
-    # ── 簇 D：测试间全局状态污染 ──
-    # 单跑通过、全量按套件顺序跑必挂：自建临时 DB 并 reset_default_workspace_db，
-    # 但被其他用例污染的全局状态（默认 provider/环境变量）破坏，阶段 1 排查污染源。
-    "tests/test_v1_writeback_bookdata_verify.py::test_v1_writeback_bookdata_verify": ("测试隔离", "全量顺序下全局状态被污染"),
+    # 摘牌记录：test_v1_writeback_bookdata_verify（测试隔离/全局状态污染）已于
+    # 阶段 1.2 修复——污染源是 log_change 未提交写入留下的跨线程未决事务，
+    # 线程本地连接 + log_change 自行提交后连续两次全量通过。
 }

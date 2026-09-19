@@ -83,8 +83,13 @@ class SyncChangelogMixin:
                     _json.dumps(payload, ensure_ascii=False) if payload else "",
                 ),
             )
-            # 注意：不在此 commit，依赖外层业务写入的 commit 一起提交。
-            # 这样若业务回滚，changelog 也会回滚，保持一致性。
+            # 若处于显式 transaction() 内则不 commit，随外层业务写入一起提交/回滚，
+            # 保持一致性；事务外（绝大多数调用方都是先 commit 业务数据再调
+            # log_change）必须自行提交，否则 changelog 写入会留下未决事务——
+            # 线程本地连接下会占住写锁阻塞其他线程；旧共享连接架构下则会被
+            # 任意线程的下次 commit "顺手"提交，造成跨线程事务污染。
+            if not self.connection._commit_suppressed:
+                self.connection.commit()
         except sqlite3.Error:
             # 静默失败：changelog 故障不应影响业务流程
             return

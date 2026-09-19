@@ -582,6 +582,9 @@ class SchemaMixin:
         self._mark_database_reset_epoch()
         self._normalize_all_volume_orders()
         self._normalize_all_chapter_orders()
+        # 迁移/规整调用在 with 块之外执行，会留下未决事务；连接改为线程本地后，
+        # 未决事务会一直占住写锁并阻塞其他线程写入，必须显式收尾提交
+        self.connection.commit()
 
     def _reset_database_for_current_epoch(self) -> None:
         if not self._database_has_user_objects():
