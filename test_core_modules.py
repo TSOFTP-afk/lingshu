@@ -664,7 +664,6 @@ class TestSecureStorage(unittest.TestCase):
             def get_password(cls, service, key):
                 return cls.values.get((service, key))
 
-        outcome = {}
         # 平台判定走单点替换（严禁全局补丁 os.name——PosixPath 报告地雷，见 secure_storage._is_windows）
         with patch("novel_app.secure_storage._is_windows", lambda: False), patch.dict(sys.modules, {"keyring": FakeKeyring}), patch.dict(os.environ, {"LINGSHU_MASTER_KEY": ""}):
             protected = protect_secret("sk-keyring-test")
