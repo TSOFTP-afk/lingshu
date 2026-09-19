@@ -855,8 +855,12 @@ def initialize_database(db_path: Path = DEFAULT_DB_PATH) -> None:
         _ensure_column(connection, "bookshelf_items", "deleted_at", "DATETIME")
         _ensure_column(connection, "bookshelf_items", "deleted_by", "INTEGER")
         connection.execute("UPDATE auth_tokens SET created_at = COALESCE(created_at, datetime(expires_at, '-7 days'))")
-        for row in connection.execute("SELECT token FROM auth_tokens WHERE token_hash IS NULL OR token_hash = ''").fetchall():
+        # 安全迁移：存量行回填 token_hash 后清空明文 token 列（拖库不再泄露活跃会话），幂等可重跑
+        for row in connection.execute(
+            "SELECT token FROM auth_tokens WHERE (token_hash IS NULL OR token_hash = '') AND token IS NOT NULL AND token != ''"
+        ).fetchall():
             connection.execute("UPDATE auth_tokens SET token_hash = ? WHERE token = ?", (_token_hash(row["token"]), row["token"]))
+        connection.execute("UPDATE auth_tokens SET token = NULL WHERE token IS NOT NULL")
         connection.execute("UPDATE users SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)")
         connection.execute(
             """

@@ -592,11 +592,15 @@ def test_cloud_usage_schema_migrates_old_auth_tokens_idempotently(tmp_path: Path
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
-        token_hash = connection.execute("SELECT token_hash FROM auth_tokens WHERE token = 'legacy-token'").fetchone()[0]
+        # 安全迁移：存量明文行回填 token_hash 后清空 token 列，不再能按明文查询
+        token_hash, stored_token = connection.execute(
+            "SELECT token_hash, token FROM auth_tokens WHERE user_id = 1"
+        ).fetchone()
 
     assert {"created_at", "revoked_at", "token_hash"} <= columns
     assert {"book_fulltexts", "user_online_sessions", "user_analysis_runs", "user_ai_usage_events"} <= tables
     assert token_hash
+    assert stored_token is None or stored_token == ""
 
 
 def test_author_save_updates_fulltext_snapshot_and_anonymous_publish_does_not(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

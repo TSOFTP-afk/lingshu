@@ -90,7 +90,7 @@ class ConnectionManager:
         import time
         count = self._ip_failures.get(ip, 0) + 1
         self._ip_failures[ip] = count
-        ban_threshold = int(os.environ.get("WS_AUTH_FAILURE_BAN_THRESHOLD", "0"))
+        ban_threshold = int(os.environ.get("WS_AUTH_FAILURE_BAN_THRESHOLD", "5"))
         if ban_threshold > 0 and count >= ban_threshold:
             ban_seconds = int(os.environ.get("WS_AUTH_FAILURE_BAN_SECONDS", "900"))
             self._ip_bans[ip] = time.time() + ban_seconds

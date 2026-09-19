@@ -138,9 +138,7 @@ def _save_user_profile_to_db(db_path: Path, user_id: int, purpose: str, profile:
     serializable.pop("label", None)
     serializable.pop("description", None)
     serializable.pop("api_key_configured", None)
-    serializable["api_key"] = protect_secret(
-        str(serializable.get("api_key") or ""), allow_plaintext_fallback=True
-    )
+    serializable["api_key"] = protect_secret(str(serializable.get("api_key") or ""))
     payload_json = json.dumps(serializable, ensure_ascii=False)
     with sqlite3.connect(str(db_path)) as conn:
         conn.execute(
@@ -293,7 +291,7 @@ def _save_ai_settings_legacy(data_dir: Path, payload: dict[str, Any]) -> dict[st
         profile["interval_seconds"] = max(5, min(60, _int(profile.get("interval_seconds"), 8)))
         profile["auto_write_threshold"] = max(0.0, min(1.0, _float(profile.get("auto_write_threshold"), 0.55)))
         profile["probe_enabled"] = bool(profile.get("probe_enabled"))
-        profile["api_key"] = protect_secret(str(profile.get("api_key") or ""), allow_plaintext_fallback=True)
+        profile["api_key"] = protect_secret(str(profile.get("api_key") or ""))
 
     data_dir.mkdir(parents=True, exist_ok=True)
     settings_path(data_dir).write_text(
@@ -324,14 +322,16 @@ def resolve_ai_profile(data_dir: Path, purpose: str | None, *, user_id: int | No
         or ""
     ).strip()
 
-    if not profile.get("api_key") and env_api_key:
+    if not profile.get("api_key") and env_api_key and server_key_fallback_enabled():
+        # 服务端 Key 回退为 opt-in：仅当 LINGSHU_ALLOW_SERVER_KEY_FALLBACK=1 时才注入，
+        # 默认关闭，避免免费用户无限消耗服务端 Key。
         profile["api_key"] = env_api_key
     if (not profile.get("base_url") or profile.get("base_url") == DEFAULT_BASE_URL) and env_base_url:
         profile["base_url"] = env_base_url
     if not profile.get("model") and env_model:
         profile["model"] = env_model
 
-    if env_api_key and env_model and not profile.get("remote_enabled"):
+    if env_api_key and env_model and not profile.get("remote_enabled") and server_key_fallback_enabled():
         profile["remote_enabled"] = True
 
     if not profile.get("remote_enabled"):
@@ -361,10 +361,28 @@ def resolve_ai_profile(data_dir: Path, purpose: str | None, *, user_id: int | No
     return profile
 
 
+def server_key_fallback_enabled() -> bool:
+    """服务端 AI Key 回退开关：仅当 env ``LINGSHU_ALLOW_SERVER_KEY_FALLBACK=1`` 时启用。"""
+    return os.environ.get("LINGSHU_ALLOW_SERVER_KEY_FALLBACK", "").strip() == "1"
+
+
+def _server_key_present() -> bool:
+    """环境变量中是否配置了服务端 AI Key。"""
+    return bool(
+        (
+            os.environ.get("LINGSHU_AI_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or ""
+        ).strip()
+    )
+
+
 def validate_profile_ready(profile: dict[str, Any]) -> tuple[bool, str]:
     if not profile.get("remote_enabled"):
         return False, "该用途未启用远程 AI。"
     if not str(profile.get("api_key") or "").strip():
+        if _server_key_present() and not server_key_fallback_enabled():
+            return False, "缺少 API Key。服务端共享 Key 未开放使用，请在 AI 设置中配置你自己的 API Key。"
         return False, "缺少 API Key。"
     if not str(profile.get("model") or "").strip():
         return False, "缺少模型名称。"

@@ -636,7 +636,7 @@ class TestSecureStorage(unittest.TestCase):
 
     def test_secret_roundtrip(self):
         secret = "sk-test-local-secret"
-        protected = protect_secret(secret, allow_plaintext_fallback=True)
+        protected = protect_secret(secret)
         self.assertEqual(unprotect_secret(protected), secret)
         if os.name == "nt":
             self.assertTrue(protected.startswith(DPAPI_PREFIX))
@@ -654,8 +654,8 @@ class TestSecureStorage(unittest.TestCase):
             def get_password(cls, service, key):
                 return cls.values.get((service, key))
 
-        with patch("novel_app.secure_storage.os.name", "posix"), patch.dict(sys.modules, {"keyring": FakeKeyring}):
-            protected = protect_secret("sk-keyring-test", allow_plaintext_fallback=True)
+        with patch("novel_app.secure_storage.os.name", "posix"), patch.dict(sys.modules, {"keyring": FakeKeyring}), patch.dict(os.environ, {"LINGSHU_MASTER_KEY": ""}):
+            protected = protect_secret("sk-keyring-test")
             self.assertTrue(protected.startswith(KEYRING_PREFIX))
             self.assertEqual(unprotect_secret(protected), "sk-keyring-test")
 

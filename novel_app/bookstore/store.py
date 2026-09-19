@@ -236,9 +236,9 @@ class BookstoreStore:
                 """
                 UPDATE auth_tokens
                 SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
-                WHERE token = ? AND revoked_at IS NULL
+                WHERE token_hash = ? AND revoked_at IS NULL
                 """,
-                (token,),
+                (token_hash,),
             )
             self._settle_online_session(connection, token_hash=token_hash, status="logged_out")
             connection.commit()
@@ -453,9 +453,13 @@ class BookstoreStore:
     @staticmethod
     def _admin_token_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         item = dict(row)
+        # 安全：token 列已不再存明文（历史明文行由 schema 迁移清空），
+        # 预览从残留明文或 token_hash 前缀派生，均不泄露完整凭证
         token = str(item.pop("token", "") or "")
-        item["token_preview"] = _masked_token(token)
-        item["token_hash"] = item.get("token_hash") or _token_hash(token)
+        token_hash = str(item.get("token_hash") or "")
+        item["token_preview"] = _masked_token(token or token_hash)
+        if not token_hash and token:
+            item["token_hash"] = _token_hash(token)
         item["revoked"] = bool(item.get("revoked_at"))
         return item
 
@@ -750,12 +754,13 @@ class BookstoreStore:
                 return None
             token = _generate_token()
             token_hash = _token_hash(token)
+            # 安全：只存哈希，明文 token 仅返回给客户端，不落库（防拖库泄露会话）
             connection.execute(
                 """
                 INSERT INTO auth_tokens (token, token_hash, user_id, created_at, expires_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP, datetime('now', '+7 days'))
+                VALUES (NULL, ?, ?, CURRENT_TIMESTAMP, datetime('now', '+7 days'))
                 """,
-                (token, token_hash, row["id"]),
+                (token_hash, row["id"]),
             )
             token_row = connection.execute("SELECT expires_at FROM auth_tokens WHERE token_hash = ?", (token_hash,)).fetchone()
             self._record_login_session(
@@ -2165,7 +2170,7 @@ class BookstoreStore:
                 f"""
                 SELECT
                     u.*,
-                    COUNT(DISTINCT CASE WHEN at.revoked_at IS NULL AND at.expires_at > datetime('now') THEN at.token END) AS token_count,
+                    COUNT(DISTINCT CASE WHEN at.revoked_at IS NULL AND at.expires_at > datetime('now') THEN at.rowid END) AS token_count,
                     COUNT(DISTINCT td.id) AS device_count,
                     COUNT(DISTINCT bi.id) AS bookshelf_item_count
                 FROM users AS u
@@ -2196,7 +2201,10 @@ class BookstoreStore:
             result["tokens"] = [
                 self._admin_token_row(item)
                 for item in connection.execute(
-                    "SELECT * FROM auth_tokens WHERE user_id = ? ORDER BY expires_at DESC",
+                    """
+                    SELECT rowid AS id, user_id, token_hash, created_at, revoked_at, expires_at
+                    FROM auth_tokens WHERE user_id = ? ORDER BY expires_at DESC
+                    """,
                     (int(user_id),),
                 ).fetchall()
             ]
@@ -2691,7 +2699,7 @@ class BookstoreStore:
             total = connection.execute("SELECT COUNT(*) FROM auth_tokens").fetchone()[0]
             rows = connection.execute(
                 """
-                SELECT t.*, u.username
+                SELECT t.rowid AS id, t.user_id, t.token_hash, t.created_at, t.revoked_at, t.expires_at, u.username
                 FROM auth_tokens AS t
                 JOIN users AS u ON u.id = t.user_id
                 ORDER BY t.expires_at DESC
@@ -2705,22 +2713,25 @@ class BookstoreStore:
 
     def admin_revoke_token(self, admin_user_id: int, token: str) -> bool:
         token_or_hash = str(token or "")
+        # 安全：token 列已不存明文，统一按 token_hash 匹配。
+        # 入参兼容明文 token（先哈希）与管理端直接传哈希两种情况
+        token_hash = _token_hash(token_or_hash)
         with _connect(self.db_path) as connection:
             rows = connection.execute(
                 """
                 SELECT token_hash
                 FROM auth_tokens
-                WHERE revoked_at IS NULL AND (token = ? OR token_hash = ?)
+                WHERE revoked_at IS NULL AND token_hash IN (?, ?)
                 """,
-                (token_or_hash, token_or_hash),
+                (token_or_hash, token_hash),
             ).fetchall()
             cursor = connection.execute(
                 """
                 UPDATE auth_tokens
                 SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
-                WHERE revoked_at IS NULL AND (token = ? OR token_hash = ?)
+                WHERE revoked_at IS NULL AND token_hash IN (?, ?)
                 """,
-                (token_or_hash, token_or_hash),
+                (token_or_hash, token_hash),
             )
             if cursor.rowcount <= 0:
                 return False
@@ -2731,7 +2742,7 @@ class BookstoreStore:
                 admin_user_id,
                 "revoke",
                 "auth_token",
-                token_or_hash if len(token_or_hash) == 64 else _token_hash(token_or_hash),
+                token_hash,
             )
             connection.commit()
         return True

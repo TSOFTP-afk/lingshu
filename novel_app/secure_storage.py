@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 DPAPI_PREFIX = "dpapi:"
 KEYRING_PREFIX = "keyring:"
+FERNET_PREFIX = "fernet:"
 _LEGACY_APP_ENTROPY = b"LingShuNovel-v1.3"
 _KEYRING_SERVICE = "LingShuNovel"
 
@@ -23,26 +24,50 @@ def _app_entropy() -> bytes:
     return hashlib.sha256(base + b":" + user).digest()
 
 
-def protect_secret(secret: str, *, allow_plaintext_fallback: bool = False) -> str:
+def _fernet_from_master_key():
+    """根据 env ``LINGSHU_MASTER_KEY`` 构造 Fernet 实例；未配置或依赖缺失时返回 None。"""
+    master = os.environ.get("LINGSHU_MASTER_KEY", "").strip()
+    if not master:
+        return None
+    try:
+        from cryptography.fernet import Fernet
+    except Exception:
+        logger.error("cryptography 库不可用，无法使用 LINGSHU_MASTER_KEY 加密")
+        return None
+    key = base64.urlsafe_b64encode(hashlib.sha256(master.encode("utf-8")).digest())
+    return Fernet(key)
+
+
+def protect_secret(secret: str) -> str:
     if not secret:
         return ""
-    if os.name != "nt":
-        keyring_id = _store_keyring_secret(secret)
-        if keyring_id:
-            return f"{KEYRING_PREFIX}{keyring_id}"
-        if not allow_plaintext_fallback:
-            raise RuntimeError(
-                "No secure storage backend available. "
-                "Install keyring package or explicitly set allow_plaintext_fallback=True"
-            )
-        logger.warning("No secure keyring backend available, secret stored as plaintext")
-        return secret
-    return f"{DPAPI_PREFIX}{base64.b64encode(_crypt_protect(secret.encode('utf-8'), _app_entropy())).decode('ascii')}"
+    if os.name == "nt":
+        return f"{DPAPI_PREFIX}{base64.b64encode(_crypt_protect(secret.encode('utf-8'), _app_entropy())).decode('ascii')}"
+    # Linux/macOS：master key Fernet 加密优先（docker 部署确定性最高），其次 keyring；
+    # 两者都不可用时抛出明确异常，绝不将密钥明文写入数据库。
+    fernet = _fernet_from_master_key()
+    if fernet is not None:
+        return f"{FERNET_PREFIX}{fernet.encrypt(secret.encode('utf-8')).decode('ascii')}"
+    keyring_id = _store_keyring_secret(secret)
+    if keyring_id:
+        return f"{KEYRING_PREFIX}{keyring_id}"
+    raise RuntimeError(
+        "无可用安全存储后端，拒绝将 API Key 明文写入数据库。"
+        "请设置环境变量 LINGSHU_MASTER_KEY（任意强随机字符串，用于加密存储），"
+        "或安装并配置可用的 keyring 后端。详见部署文档中 LINGSHU_MASTER_KEY 的说明。"
+    )
 
 
 def unprotect_secret(value: str) -> str:
     if not value:
         return ""
+    if value.startswith(FERNET_PREFIX):
+        fernet = _fernet_from_master_key()
+        if fernet is None:
+            raise RuntimeError(
+                "检测到 Fernet 加密的密钥，但未设置 LINGSHU_MASTER_KEY（或密钥已变更），无法解密"
+            )
+        return fernet.decrypt(value[len(FERNET_PREFIX) :].encode("ascii")).decode("utf-8")
     if value.startswith(KEYRING_PREFIX):
         return _load_keyring_secret(value[len(KEYRING_PREFIX) :])
     if not value.startswith(DPAPI_PREFIX):

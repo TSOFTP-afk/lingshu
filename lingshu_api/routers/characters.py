@@ -46,6 +46,26 @@ def _character_schemas() -> dict[str, list[dict[str, Any]]]:
     }
 
 
+def _is_admin(user: dict) -> bool:
+    return bool(int(user.get("is_admin") or 0))
+
+
+def _require_character_write_access(
+    db: WorkspaceDB, char: dict[str, Any], user: dict
+) -> int:
+    """写操作归属校验，返回归属 book_id。
+
+    归属书籍的人物：必须通过书籍归属校验（不得因 book_id 缺失跳过）；
+    全局人物（book_id 无效/为 0）：仅管理员可写，普通用户 403。
+    """
+    book_id = int(char.get("book_id") or 0)
+    if book_id:
+        check_book_owner(db, book_id, user)
+    elif not _is_admin(user):
+        raise HTTPException(status_code=403, detail="全局人物仅管理员可修改")
+    return book_id
+
+
 @router.get("/books/{book_id}/characters")
 def list_characters(book_id: int, user: dict = Depends(require_login), db: WorkspaceDB = Depends(get_workspace_db)):
     """列出作品下的人物（含全局人物）。"""
@@ -95,9 +115,7 @@ def update_character(request: Request, character_id: int, payload: CharacterUpda
     char = db.get_character(character_id)
     if not char:
         raise HTTPException(status_code=404, detail="人物不存在")
-    book_id = int(char.get("book_id") or 0)
-    if book_id:
-        check_book_owner(db, book_id, user)
+    _require_character_write_access(db, char, user)
     kwargs = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
     if kwargs:
         db.update_character(character_id, **kwargs)
@@ -114,9 +132,7 @@ def delete_character(request: Request, character_id: int, user: dict = Depends(r
     char = db.get_character(character_id)
     if not char:
         raise HTTPException(status_code=404, detail="人物不存在")
-    book_id = int(char.get("book_id") or 0)
-    if book_id:
-        check_book_owner(db, book_id, user)
+    book_id = _require_character_write_access(db, char, user)
     db.delete_character(character_id)
     if book_id:
         try_cloud_sync(request, book_id, user)
@@ -156,9 +172,7 @@ async def upload_character_image(
     char = db.get_character(character_id)
     if not char:
         raise HTTPException(status_code=404, detail="人物不存在")
-    book_id = int(char.get("book_id") or 0)
-    if book_id:
-        check_book_owner(db, book_id, user)
+    _require_character_write_access(db, char, user)
     raw = await file.read()
     if len(raw) > MAX_IMAGE_SIZE:
         raise HTTPException(status_code=413, detail="图片大小不能超过 5MB")
@@ -185,12 +199,19 @@ async def upload_character_image(
 
 
 def _load_character_with_owner(
-    character_id: int, user: dict, db: WorkspaceDB
+    character_id: int, user: dict, db: WorkspaceDB, *, require_write: bool = False
 ) -> tuple[dict[str, Any], int]:
-    """加载人物并校验书籍归属，返回 (character, book_id)。不存在则抛 404。"""
+    """加载人物并校验书籍归属，返回 (character, book_id)。不存在则抛 404。
+
+    读操作：归属书籍的人物校验归属，全局人物对登录用户开放；
+    写操作（require_write=True）：全局人物仅管理员可写。
+    """
     char = db.get_character(character_id)
     if not char:
         raise HTTPException(status_code=404, detail="人物不存在")
+    if require_write:
+        book_id = _require_character_write_access(db, char, user)
+        return char, book_id
     book_id = int(char.get("book_id") or 0)
     if book_id:
         check_book_owner(db, book_id, user)
@@ -218,7 +239,7 @@ def update_state_machine(
     db: WorkspaceDB = Depends(get_workspace_db),
 ):
     """更新人物状态机字段（仅更新提供的字段）。"""
-    _, book_id = _load_character_with_owner(character_id, user, db)
+    _, book_id = _load_character_with_owner(character_id, user, db, require_write=True)
     data = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not data:
         raise HTTPException(status_code=400, detail="未提供更新字段")
@@ -256,7 +277,7 @@ def create_cycle(
     db: WorkspaceDB = Depends(get_workspace_db),
 ):
     """创建循环日志（自动处理增值累计与快照存档）。"""
-    _, book_id = _load_character_with_owner(character_id, user, db)
+    _, book_id = _load_character_with_owner(character_id, user, db, require_write=True)
     try:
         result = db.create_cycle(character_id, payload.model_dump())
         if book_id:
@@ -290,7 +311,7 @@ def create_character_snapshot(
     db: WorkspaceDB = Depends(get_workspace_db),
 ):
     """手动触发快照存档。"""
-    _, book_id = _load_character_with_owner(character_id, user, db)
+    _, book_id = _load_character_with_owner(character_id, user, db, require_write=True)
     try:
         item = db.create_character_snapshot(
             character_id,

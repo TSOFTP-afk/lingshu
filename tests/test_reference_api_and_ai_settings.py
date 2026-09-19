@@ -145,9 +145,16 @@ def test_ai_settings_roundtrip_and_purpose_resolution(client: TestClient, tmp_pa
 
     monkeypatch.setenv("LINGSHU_AI_API_KEY", "sk-env")
     monkeypatch.setenv("LINGSHU_AI_MODEL", "env-model")
+    # 服务端 Key 回退默认关闭：不得静默注入环境变量 Key
+    locked_profile = resolve_ai_profile(data_dir, "chat")
+    assert locked_profile["api_key"] == ""
+    assert locked_profile["remote_enabled"] is False
+    # opt-in（LINGSHU_ALLOW_SERVER_KEY_FALLBACK=1）后才回退注入
+    monkeypatch.setenv("LINGSHU_ALLOW_SERVER_KEY_FALLBACK", "1")
     chat_profile = resolve_ai_profile(data_dir, "chat")
     assert chat_profile["api_key"] == "sk-env"
     assert chat_profile["model"] == "env-model"
+    monkeypatch.delenv("LINGSHU_ALLOW_SERVER_KEY_FALLBACK", raising=False)
 
     test_profile = {**loaded["profiles"]["writing"], "api_key": "sk-test-writing"}
     test_resp = client.post("/api/settings/ai/test", json={"purpose": "writing", "profile": test_profile})

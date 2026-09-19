@@ -67,3 +67,9 @@ lingjing-app/test.lingshu-key
 .password_pepper
 .password_salt
 admin_key.enc
+
+# 工具会话状态/覆盖率产物
+.mimosa/
+.coverage
+.coverage.*
+htmlcov/
