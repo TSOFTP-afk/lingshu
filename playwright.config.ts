@@ -13,6 +13,8 @@ const backendEnv = {
   LINGSHU_E2E_PASS: 'e2e_pass_123',
   SIMPLE_AI_NOVEL_DATA_DIR: e2eDataDir,
   BOOKSTORE_DB_PATH: path.join(e2eDataDir, 'bookstore_demo.db'),
+  // 存量登录 E2E 保持多用户语义：显式关闭本地单用户模式（后端默认开启）
+  LINGSHU_LOCAL_USER: '0',
 };
 
 export default defineConfig({

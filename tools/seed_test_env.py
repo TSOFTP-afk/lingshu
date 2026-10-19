@@ -29,6 +29,10 @@ from fastapi import HTTPException
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+# 种子脚本走登录校验（login_user），保持多用户语义：显式关闭本地单用户模式
+# （personal-client 分支后端默认开启，Playwright webServer env 已同步设 0）。
+os.environ.setdefault("LINGSHU_LOCAL_USER", "0")
+
 # ---------------------------------------------------------------
 # 1. 环境变量解析（必须在导入 novel_app/lingshu_api 之前完成：
 #    password pepper/salt 等模块级常量在 import 时读取环境变量）

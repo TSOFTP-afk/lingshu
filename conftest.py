@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
+
+# 存量测试保持多用户语义：本地单用户模式（personal-client 分支默认开启）在
+# 测试环境显式关闭，登录/配额/WS 鉴权类用例行为与 master 一致。
+# 必须在导入 lingshu_api 之前设置（conftest 先于所有测试模块加载）。
+os.environ.setdefault("LINGSHU_LOCAL_USER", "0")
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 QT_MODULE_PRESENT = (PROJECT_ROOT / "novel_app" / "qt").exists()

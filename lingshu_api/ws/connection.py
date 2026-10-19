@@ -18,6 +18,8 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from lingshu_api.dependencies import _local_user, _local_user_mode
+
 logger = logging.getLogger("lingshu.ws")
 
 PING_INTERVAL_SEC = 25
@@ -247,6 +249,18 @@ async def authenticate_ws(
         return None
 
     try:
+        if _local_user_mode():
+            # 本地单用户模式：免 token 直通 — 消费客户端发来的首条 auth 消息保持
+            # 协议消息序，然后按认证成功路径直接认证为本地用户（跳过 token 校验
+            # 与封禁计数）。显式设 LINGSHU_LOCAL_USER=0 恢复多用户校验语义。
+            with contextlib.suppress(Exception):
+                await ws.receive_text()
+            local_user = _local_user()
+            conn.user = dict(local_user)
+            manager.clear_auth_failures(ip)
+            await manager.send(conn.client_id, {"type": "auth_ok", "payload": {"username": local_user.get("username", "")}})
+            return conn
+
         auth_text = await ws.receive_text()
         if len(auth_text) > ConnectionManager.MAX_WS_MESSAGE_SIZE:
             await manager.send(conn.client_id, {"type": error_type, "payload": {"message": "消息大小超过限制"}})

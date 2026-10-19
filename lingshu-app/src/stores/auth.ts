@@ -68,8 +68,22 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = getAuthToken() || '';
     }
     if (!token.value) {
-      initialized.value = true;
-      return null;
+      // 本地单用户模式：后端 /auth/me 无 token 也返回本地用户（200），
+      // 借此免登录直达工作台；多用户模式返回 401，走 catch 维持未登录（原行为）。
+      loading.value = true;
+      try {
+        const { data } = await api.get('/auth/me');
+        const me = (data as AuthUser | null) ?? null;
+        user.value = me;
+        initialized.value = true;
+        return me;
+      } catch {
+        // 多用户模式 401：静默维持未登录，不弹错误
+        initialized.value = true;
+        return null;
+      } finally {
+        loading.value = false;
+      }
     }
     return fetchMe();
   }

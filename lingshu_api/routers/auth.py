@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from lingshu_api.dependencies import get_store
+from lingshu_api.dependencies import _local_user, _local_user_mode, get_store
 from lingshu_api.schemas.auth import LoginResponse, OkResponse, UserInfoResponse
 from lingshu_api.services.db_bridge import WorkspaceDB, get_workspace_db
 from novel_app.bookstore import (
@@ -138,6 +138,15 @@ async def logout(authorization: str = Header(default=""), store: BookstoreStore 
 
 @router.get("/me", response_model=UserInfoResponse)
 async def me(authorization: str = Header(default=""), store: BookstoreStore = Depends(get_store)):
+    """当前用户信息。
+
+    本地单用户模式（LINGSHU_LOCAL_USER 默认 "1"）下直接返回内存构造的本地用户
+    （200），前端 init 无 token 也可借此免登录直达工作台；不校验传入 token，
+    与 require_login 的直通语义一致，也避免本地模式陈旧 token 触发前端误登出。
+    多用户模式（显式设 0）行为不变：无 token/失效 token 均 401。
+    """
+    if _local_user_mode():
+        return _local_user()
     token = _bearer_token(authorization)
     if not token:
         raise HTTPException(status_code=401, detail="未登录")

@@ -63,6 +63,43 @@ def get_sync_service(request: Request) -> BookSyncService:
     return sync_service
 
 
+# ── 本地单用户模式（personal-client 分支 P2）──────────────────────
+
+_LOCAL_USER_USERNAME = "local"
+
+
+def _local_user_mode() -> bool:
+    """是否处于本地单用户模式（免登录直通）。
+
+    读环境变量 ``LINGSHU_LOCAL_USER``，**默认开启（"1"）**：personal-client 分支的
+    产品语义即"本人单用户的本地创作客户端"，登录不该是使用 AI/工作台的前置。
+    仅当显式设置字面 ``"0"`` 时关闭，恢复多用户登录语义——存量测试（根 conftest）、
+    Playwright 登录 E2E（playwright.config.ts）与 tools/seed_test_env.py 均依赖
+    该开关保持原行为。
+    """
+    raw = os.environ.get("LINGSHU_LOCAL_USER", "1").strip()
+    return raw != "0"
+
+
+def _local_user() -> dict[str, Any]:
+    """构造本地单用户的内存用户 dict（不查库，本地模式 bookstore 可能没有该用户）。
+
+    结构与 ``novel_app.bookstore.security._public_user`` 返回的用户 dict 同构，
+    字段覆盖下游全部使用点（user["id"]/user.get("is_author")/user.get("is_admin")/
+    user.get("status")/user.get("username")）。id=1 与 is_admin=1/is_author=1 使
+    require_login/require_author/require_admin 在本地模式全部直通。
+    """
+    return {
+        "id": 1,
+        "username": _LOCAL_USER_USERNAME,
+        "is_author": 1,
+        "is_admin": 1,
+        "status": "active",
+        "bind_reader_id": None,
+        "bind_reader_name": None,
+    }
+
+
 def get_optional_user(request: Request, authorization: str = Header(default="")) -> dict[str, Any] | None:
     """解析 Authorization 头，返回用户信息或 None。"""
     token = _bearer_token(authorization)
@@ -72,7 +109,13 @@ def get_optional_user(request: Request, authorization: str = Header(default=""))
 
 
 def require_login(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
-    """要求已登录，返回用户信息。"""
+    """要求已登录，返回用户信息。
+
+    本地单用户模式（默认）下跳过 token 校验，直接返回内存构造的本地用户；
+    显式设 ``LINGSHU_LOCAL_USER=0`` 恢复多用户登录语义（401 照旧）。
+    """
+    if _local_user_mode():
+        return _local_user()
     token = _bearer_token(authorization)
     if not token:
         raise HTTPException(status_code=401, detail="未登录")
@@ -85,8 +128,13 @@ def require_login(request: Request, authorization: str = Header(default="")) -> 
 def require_ai_access(request: Request, authorization: str = Header(default="")) -> Iterator[dict[str, Any]]:
     """AI 功能统一门禁：登录 + 账号状态 + 每日 token 预算 + 每用户并发上限。
 
+    本地单用户模式（默认）下跳过登录与配额校验，直通本地用户——单人本地使用
+    自己的 Key，无需限额；显式设 ``LINGSHU_LOCAL_USER=0`` 恢复多用户语义。
     yield 形式依赖：请求结束后（含异常路径）在 finally 中必定释放并发槽位。
     """
+    if _local_user_mode():
+        yield _local_user()
+        return
     token = _bearer_token(authorization)
     if not token:
         raise HTTPException(status_code=401, detail="请先登录后使用 AI 功能")

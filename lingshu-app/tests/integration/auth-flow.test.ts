@@ -124,13 +124,27 @@ describe('认证流程集成测试', () => {
       expect(result).toEqual(userData);
     });
 
-    it('init 时无 token 直接返回 null', async () => {
+    it('init 时无 token 尝试本地模式探测，401 则返回 null', async () => {
+      // 多用户模式：/auth/me 无 token 返回 401（以空数据模拟 catch 前的失败语义）
+      api.get.mockResolvedValueOnce({ data: null });
       const authStore = useAuthStore();
       const result = await authStore.init();
 
+      // 本地单用户模式：无 token 也会探测一次 /auth/me
+      expect(api.get).toHaveBeenCalledWith('/auth/me');
       expect(result).toBeNull();
       expect(authStore.initialized).toBe(true);
-      expect(api.get).not.toHaveBeenCalled();
+    });
+
+    it('init 时无 token 命中本地单用户模式则直接进入登录态', async () => {
+      const localUser = { id: 1, username: 'local', is_author: 1, bind_reader_id: null, bind_reader_name: null };
+      api.get.mockResolvedValueOnce({ data: localUser });
+      const authStore = useAuthStore();
+      const result = await authStore.init();
+
+      expect(api.get).toHaveBeenCalledWith('/auth/me');
+      expect(result).toEqual(localUser);
+      expect(authStore.user).toEqual(localUser);
     });
   });
 
