@@ -1,92 +1,99 @@
 {
-    "name":  "lingshu-electron",
-    "version":  "2.0.0",
-    "description":  "LingShu - Smart writing workbench (Electron shell)",
-    "main":  "main.js",
-    "scripts":  {
-                    "start":  "electron .",
-                    "dev":  "set NODE_ENV=development \u0026\u0026 electron .",
-                    "build":  "electron-builder"
-                },
-    "build":  {
-                  "appId":  "com.lingshu.app",
-                  "productName":  "LingShu",
-                  "artifactName":  "LingShu-${version}.${ext}",
-                  "directories":  {
-                                      "output":  "../release"
-                                  },
-                  "files":  [
-                                "main.js",
-                                "preload.js",
-                                "splash.html",
-                                "shared/**/*",
-                                "dist/**/*",
-                                "!node_modules/**/*"
-                            ],
-                  "asar":  true,
-                  "asarUnpack":  [
-                                     "dist/**/*"
-                                 ],
-                  "extraResources":  [
-                                         {
-                                             "from":  "../packaging/app_icon.ico",
-                                             "to":  "packaging/app_icon.ico"
-                                         },
-                                         {
-                                             "from":  "../main.py",
-                                             "to":  "backend/main.py"
-                                         },
-                                         {
-                                             "from":  "../lingshu_api",
-                                             "to":  "backend/lingshu_api"
-                                         },
-                                         {
-                                             "from":  "../novel_app",
-                                             "to":  "backend/novel_app"
-                                         },
-                                         {
-                                             "from":  "../requirements.txt",
-                                             "to":  "backend/requirements.txt"
-                                         },
-                                         {
-                                             "from":  "../release/electron-python/python",
-                                             "to":  "python"
-                                         },
-                                         {
-                                             "from":  "assets/splash.png",
-                                             "to":  "branding/startup.png"
-                                         }
-                                     ],
-                  "win":  {
-                              "icon":  "../packaging/app_icon.ico",
-                              "target":  [
-                                             {
-                                                 "target":  "portable",
-                                                 "arch":  [
-                                                              "x64"
-                                                          ]
-                                             }
-                                         ],
-                              "signAndEditExecutable":  false,
-                              "verifyUpdateCodeSignature":  false
-                          },
-                  "mac":  {
-                              "hardenedRuntime":  true,
-                              "identity":  "env:MAC_CSC_NAME"
-                          },
-                  "publish":  {
-                                  "provider":  "generic",
-                                  "url":  "https://update.ling-shu.top"
-                              },
-                  "portable":  {
-                                   "artifactName":  "LingShu-${version}.${ext}"
-                               }
-              },
-    "devDependencies":  {
-                            "electron":  "^33.0.0",
-                            "electron-builder":  "^24.0.0"
-                        },
-    "dependencies":  {
-                         "electron-updater":  "^6.0.0"
-                     }
+  "name": "lingshu-electron",
+  "version": "2.0.0",
+  "description": "LingShu - Smart writing workbench (Electron shell)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "set NODE_ENV=development && electron .",
+    "build": "electron-builder"
+  },
+  "build": {
+    "appId": "com.lingshu.app",
+    "productName": "LingShu",
+    "artifactName": "LingShu-${version}.${ext}",
+    "directories": {
+      "output": "../release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "splash.html",
+      "shared/**/*",
+      "dist/**/*",
+      "!node_modules/**/*"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../packaging/app_icon.ico",
+        "to": "packaging/app_icon.ico"
+      },
+      {
+        "from": "../main.py",
+        "to": "backend/main.py"
+      },
+      {
+        "from": "../lingshu_api",
+        "to": "backend/lingshu_api"
+      },
+      {
+        "from": "../novel_app",
+        "to": "backend/novel_app"
+      },
+      {
+        "from": "../requirements.txt",
+        "to": "backend/requirements.txt"
+      },
+      {
+        "from": "../release/electron-python/python",
+        "to": "python"
+      },
+      {
+        "from": "assets/splash.png",
+        "to": "branding/startup.png"
+      }
+    ],
+    "win": {
+      "icon": "../packaging/app_icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false
+    },
+    "mac": {
+      "hardenedRuntime": true,
+      "identity": "env:MAC_CSC_NAME"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://update.ling-shu.top"
+    },
+    "portable": {
+      "artifactName": "LingShu-${version}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.0.0"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "0.9.12",
+    "form-data": "4.0.6",
+    "js-yaml": "4.3.2",
+    "tar": "^7.5.22",
+    "brace-expansion": "^2.1.7"
+  }
 }
