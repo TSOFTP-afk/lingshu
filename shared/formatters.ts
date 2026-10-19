@@ -1,5 +1,5 @@
 /**
- * 通用格式化函数 —— 由 lingshu-app 与 cloud-admin 共享。
+ * 通用格式化函数 —— 由 lingshu-app 使用。
  *
  * 设计原则：
  *  - 纯函数，无 Vue / Element Plus / axios 等运行时依赖

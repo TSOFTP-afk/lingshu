@@ -8,12 +8,12 @@
 
 ## 当前状态
 
+> **分支说明**：本分支（`personal-client`）为个人客户端改造线，`web/`（读者/书城端）与 `cloud-admin/`（管理后台）已移除，容器化部署配置（Dockerfile、docker-compose）已删除。完整产品线见 `master` 分支。
+
 - **创作工作台**：`lingshu-app/`，Vue 3 + Element Plus，连接本地 FastAPI。
 - **后端 API**：`lingshu_api/`，FastAPI REST + WebSocket，默认端口 `8787`。
 - **桌面壳**：`electron/`，默认启动或连接本地 FastAPI；登录解锁 AI、同步、备份等账号能力。
-- **读者/书城端**：`web/`，面向发布、阅读、书架和作者门户。
-- **管理后台**：`cloud-admin/`，面向用户、作品、设备、同步、配额和审计管理。
-- **灵镜管理台**：已归档（原独立 Electron 管理端），管理能力由 `cloud-admin/` 承接。
+- **灵镜管理台**：已归档（原独立 Electron 管理端）。
 - **V3 分析引擎**：已落在 `novel_app/analysis/` 和 `lingshu_api/routers/analysis_v3.py`，支持语义分块、实体、事实、记忆、探针、回溯和写回门禁。
 
 ## 核心能力
@@ -79,8 +79,6 @@ V3 流程包括：
 | 工作台前端 | Vue 3, Vite, Element Plus, Pinia, Splitpanes, G6 |
 | 后端 | FastAPI, WebSocket, SQLite |
 | 桌面壳 | Electron |
-| 读者端 | Vue 3, Vite, Element Plus, Pinia |
-| 管理端 | Vue 3, Element Plus, ECharts |
 | 核心业务 | Python, SQLite, 本地文件数据目录 |
 | AI 接口 | OpenAI 兼容 Chat Completions |
 | 分析引擎 | `novel_app/analysis/*` V3 管线 |
@@ -97,8 +95,6 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements-dev.txt
 npm install
 npm install --prefix lingshu-app
-npm install --prefix web
-npm install --prefix cloud-admin
 ```
 
 ### 2. 启动后端
@@ -131,7 +127,7 @@ npm run dev:ws
 http://127.0.0.1:5175
 ```
 
-### 4. 同时启动多个前端
+### 4. 一键启动工作台前端
 
 ```powershell
 npm run dev
@@ -140,8 +136,6 @@ npm run dev
 该命令会启动：
 
 - `lingshu-app/`：创作工作台。
-- `web/`：书城/读者端。
-- `cloud-admin/`：管理后台。
 
 后端仍需单独启动。
 
@@ -164,12 +158,10 @@ $env:LINGSHU_BACKEND_PORT="8787"
 | 命令 | 说明 |
 | --- | --- |
 | `npm run backend` | 启动 FastAPI 后端 |
-| `npm run dev` | 同时启动工作台、读者端、管理后台前端 |
+| `npm run dev` | 启动创作工作台前端 |
 | `npm run dev:ws` | 启动创作工作台前端 |
-| `npm run dev:web` | 启动读者/书城端 |
-| `npm run dev:admin` | 启动管理后台 |
 | `npm run electron` | 启动 Electron 工作台壳 |
-| `npm run build` | 构建工作台、读者端、管理后台 |
+| `npm run build` | 构建创作工作台 |
 | `npm run test` | 运行 Python 回归测试 runner |
 | `npm run test:quick` | 快速导入 FastAPI app 并统计路由 |
 
@@ -198,8 +190,6 @@ python -m pytest tests/test_admin_auth.py tests/test_bookstore_api.py tests/test
 
 ```powershell
 npm run build --prefix lingshu-app
-npm run build --prefix web
-npm run build --prefix cloud-admin
 ```
 
 CI 当前覆盖：
@@ -254,8 +244,6 @@ CI 当前覆盖：
 │   └── ws/                      WebSocket：generation、review、chat、analysis-v3
 ├── lingshu-app/                 Vue 创作工作台
 ├── electron/                    灵枢 Electron 工作台壳
-├── web/                         读者/书城前端
-├── cloud-admin/                 云端管理后台前端
 ├── novel_app/                   核心业务、AI、数据库、RAG、分析引擎
 │   ├── analysis/                V3 分析、记忆、探针、回溯、写回
 │   ├── db/                      SQLite schema 与业务数据访问

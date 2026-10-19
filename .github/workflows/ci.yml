@@ -50,11 +50,6 @@ jobs:
           # 不作为 CI 通过门；coverage 报告由 test:coverage 本地/专项产出
           - project: lingshu-app
             test: npm run test -- --run
-          - project: cloud-admin
-            test: npm run test -- --run
-          # web 无 vitest 用例，仅跑 typecheck（构建 job 中的 vite build 不再重复跑 vue-tsc）
-          - project: web
-            test: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -84,10 +79,6 @@ jobs:
       matrix:
         include:
           - project: lingshu-app
-            command: npx vite build
-          - project: web
-            command: npx vite build
-          - project: cloud-admin
             command: npx vite build
     steps:
       - uses: actions/checkout@v4
@@ -135,14 +126,6 @@ jobs:
         run: npm audit --audit-level=high
         working-directory: lingshu-app
         continue-on-error: false
-      # Node 依赖审计（web）
-      - name: Install web deps
-        run: npm ci
-        working-directory: web
-      - name: npm audit (web)
-        run: npm audit --audit-level=high
-        working-directory: web
-        continue-on-error: false
       # Node 依赖审计（electron）
       - name: Install electron deps
         run: npm ci
@@ -154,12 +137,4 @@ jobs:
         # 故此门禁为 critical 级——非装饰性放水，升级完成后恢复 high 级。
         run: npm audit --audit-level=critical
         working-directory: electron
-        continue-on-error: false
-      # Node 依赖审计（cloud-admin）
-      - name: Install cloud-admin deps
-        run: npm ci
-        working-directory: cloud-admin
-      - name: npm audit (cloud-admin)
-        run: npm audit --audit-level=high
-        working-directory: cloud-admin
         continue-on-error: false

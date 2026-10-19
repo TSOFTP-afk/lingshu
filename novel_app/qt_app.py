@@ -6,8 +6,6 @@
 原 Qt 入口逻辑位于:
 - main.py → 现在启动 FastAPI 后端
 - lingshu-app/  → Vue3 前端（创作工作台）
-- web/          → Vue3 前端（书城读者端）
-- admin-web/    → Vue3 前端（管理后台）
 - electron/     → Electron 桌面壳
 
 请使用以下命令启动:
