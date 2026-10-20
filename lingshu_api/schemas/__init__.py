@@ -1,15 +1,6 @@
 """lingshu_api schemas — Pydantic 模型汇总。"""
-from lingshu_api.schemas.admin_auth import (
-    AdminInfoResponse,
-    AdminLoginPayload,
-    AdminLoginResponse,
-)
 from lingshu_api.schemas.auth import (
-    LoginResponse,
     UserInfoResponse,
-)
-from lingshu_api.schemas.auth import (
-    OkResponse as AuthOkResponse,
 )
 from lingshu_api.schemas.settings import (
     AIProfilePayload,
@@ -33,10 +24,6 @@ from lingshu_api.schemas.workspace import (
 )
 
 __all__ = [
-    "AdminInfoResponse",
-    "AdminLoginPayload",
-    "AdminLoginResponse",
-    "AuthOkResponse",
     "AIProfilePayload",
     "AISettingsPayload",
     "AISettingsResponse",
@@ -47,7 +34,6 @@ __all__ = [
     "ChapterItemResponse",
     "ChapterListResponse",
     "VolumeItemResponse",
-    "LoginResponse",
     "SnapshotListResponse",
     "UserInfoResponse",
     "WorkspaceOkResponse",

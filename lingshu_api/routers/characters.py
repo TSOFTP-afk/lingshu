@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
-from lingshu_api.dependencies import check_book_owner, require_login, try_cloud_sync
+from lingshu_api.dependencies import check_book_owner, require_login
 from lingshu_api.schemas.workspace import (
     CharacterCreate,
     CharacterLinkBook,
@@ -93,7 +93,6 @@ def create_character(request: Request, book_id: int, payload: CharacterCreate, u
         profile_text=payload.profile_text,
         profile_data=payload.profile_data,
     )
-    try_cloud_sync(request, book_id, user)
     return {"ok": True, "item": _character_payload(char, db), "schemas": _character_schemas()}
 
 
@@ -120,9 +119,6 @@ def update_character(request: Request, character_id: int, payload: CharacterUpda
     if kwargs:
         db.update_character(character_id, **kwargs)
     item = db.get_character(character_id)
-    book_id = int(item.get("book_id") or 0) if item else None
-    if book_id:
-        try_cloud_sync(request, book_id, user)
     return {"ok": True, "item": _character_payload(item, db) if item else None, "schemas": _character_schemas()}
 
 
@@ -132,10 +128,8 @@ def delete_character(request: Request, character_id: int, user: dict = Depends(r
     char = db.get_character(character_id)
     if not char:
         raise HTTPException(status_code=404, detail="人物不存在")
-    book_id = _require_character_write_access(db, char, user)
+    _require_character_write_access(db, char, user)
     db.delete_character(character_id)
-    if book_id:
-        try_cloud_sync(request, book_id, user)
     return {"ok": True}
 
 
@@ -239,14 +233,12 @@ def update_state_machine(
     db: WorkspaceDB = Depends(get_workspace_db),
 ):
     """更新人物状态机字段（仅更新提供的字段）。"""
-    _, book_id = _load_character_with_owner(character_id, user, db, require_write=True)
+    _load_character_with_owner(character_id, user, db, require_write=True)
     data = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not data:
         raise HTTPException(status_code=400, detail="未提供更新字段")
     try:
         updated = db.update_state_machine(character_id, data)
-        if book_id:
-            try_cloud_sync(request, book_id, user)
         return {"item": updated}
     except HTTPException:
         raise
@@ -277,11 +269,9 @@ def create_cycle(
     db: WorkspaceDB = Depends(get_workspace_db),
 ):
     """创建循环日志（自动处理增值累计与快照存档）。"""
-    _, book_id = _load_character_with_owner(character_id, user, db, require_write=True)
+    _load_character_with_owner(character_id, user, db, require_write=True)
     try:
         result = db.create_cycle(character_id, payload.model_dump())
-        if book_id:
-            try_cloud_sync(request, book_id, user)
         return {"item": result}
     except HTTPException:
         raise
@@ -311,7 +301,7 @@ def create_character_snapshot(
     db: WorkspaceDB = Depends(get_workspace_db),
 ):
     """手动触发快照存档。"""
-    _, book_id = _load_character_with_owner(character_id, user, db, require_write=True)
+    _load_character_with_owner(character_id, user, db, require_write=True)
     try:
         item = db.create_character_snapshot(
             character_id,
@@ -320,8 +310,6 @@ def create_character_snapshot(
             phase_change_summary=payload.phase_change_summary,
             micro_cycle_summary=payload.micro_cycle_summary,
         )
-        if book_id:
-            try_cloud_sync(request, book_id, user)
         return {"item": item}
     except HTTPException:
         raise

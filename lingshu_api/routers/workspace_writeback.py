@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from lingshu_api.dependencies import check_book_owner, require_login, try_cloud_sync
+from lingshu_api.dependencies import check_book_owner, require_login
 from lingshu_api.routers.workspace_common import logger
 from lingshu_api.schemas.analysis_v3 import AnalysisV1OneShotRunCreate
 from lingshu_api.services.db_bridge import WorkspaceDB, get_workspace_db
@@ -147,7 +147,6 @@ async def create_analysis_v1_one_shot_run(
         result = await asyncio.to_thread(_sync)
         store = AnalysisStore(db.db)
         run = await asyncio.to_thread(store.get_run, result.run_id)
-        try_cloud_sync(request, book_id, user)
         return {"ok": True, "item": _analysis_run_item(run), **result.as_dict()}
     except HTTPException:
         raise
@@ -242,7 +241,6 @@ async def apply_analysis_run(
             )
         artifact_meta = _sync_analysis_writeback_artifacts(db, int(run["book_id"]), sorted(result.updated_chapter_ids))
         store.update_run_status(run_id, "applied", meta={"writeback_artifacts": artifact_meta})
-        try_cloud_sync(request, int(run["book_id"]), user)
         return {
             "ok": True,
             "updated_chapter_ids": sorted(result.updated_chapter_ids),

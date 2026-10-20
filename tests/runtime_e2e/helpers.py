@@ -2,7 +2,7 @@
 
 本模块为 runtime_e2e 测试套件提供：
 - 后端/前端健康检查与子进程启停
-- 账号登录与 ApiClient（封装所有业务 API 调用）
+- 当前用户查询与 ApiClient（封装所有业务 API 调用；本地单用户模式免 token）
 - E2E 测试数据清理工具
 - 探针结果解决（直接访问数据库清除 manual_review 阻断）
 - E2EReport 报告收集与渲染
@@ -31,18 +31,10 @@ BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
 FRONTEND_URL = f"http://{FRONTEND_HOST}:{FRONTEND_PORT}"
 E2E_BOOK_PREFIX = "__E2E_V3__"
 
-# 种子账号（由 tools/seed_test_env.py 创建，替代旧的硬编码账号 001）
-E2E_USER_ENV = "LINGSHU_E2E_USER"
-E2E_PASS_ENV = "LINGSHU_E2E_PASS"
-DEFAULT_E2E_USER = "e2e_writer"
-DEFAULT_E2E_PASS = "e2e_pass_123"
-
 # 项目根目录（tests/runtime_e2e 的上两级）
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # 前端目录
 FRONTEND_DIR = PROJECT_ROOT / "lingshu-app"
-# 种子脚本（幂等创建测试账号与示例书）
-SEED_SCRIPT = PROJECT_ROOT / "tools" / "seed_test_env.py"
 
 
 # ================================================================
@@ -136,82 +128,21 @@ def wait_for(predicate: Callable[[], bool], timeout: int = 60, interval: int = 1
 
 
 # ================================================================
-# 登录与 HTTP 客户端
+# 当前用户查询与 HTTP 客户端
 # ================================================================
 
-def ensure_seed_account() -> bool:
-    """运行种子脚本（幂等）确保默认测试账号与示例书存在。
+def current_user(backend_url: str = BACKEND_URL) -> dict:
+    """GET {backend_url}/api/auth/me 查询当前用户。
 
-    返回种子脚本是否成功执行；脚本缺失或失败仅告警不抛出，
-    由调用方（login）在登录失败时给出明确报错。
+    personal-client P3 后登录端点已剥离：本地单用户模式（默认）下
+    /api/auth/me 免 token 返回本地用户（200）；多用户模式下需携带有效
+    token（当前 runtime E2E 不覆盖该模式）。非 200 抛 RuntimeError。
+    同时作为会话前的后端鉴权链路健康检查。
     """
-    if not SEED_SCRIPT.exists():
-        print(f"[ensure_seed_account] 种子脚本不存在: {SEED_SCRIPT}")
-        return False
-    try:
-        result = subprocess.run(
-            ["python", str(SEED_SCRIPT)],
-            cwd=str(PROJECT_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if result.returncode != 0:
-            print(f"[ensure_seed_account] 种子脚本失败:\n{result.stdout}\n{result.stderr}")
-            return False
-        return True
-    except Exception as exc:  # noqa: BLE001 — 种子失败不应让 helper 崩溃
-        print(f"[ensure_seed_account] 运行种子脚本异常: {exc}")
-        return False
-
-
-def get_e2e_credentials() -> tuple[str, str]:
-    """读取 E2E 账号：优先 env LINGSHU_E2E_USER/LINGSHU_E2E_PASS。
-
-    未设置（或任一缺失）时自动运行种子脚本 tools/seed_test_env.py
-    （幂等），然后返回种子默认账号 e2e_writer / e2e_pass_123。
-    """
-    username = os.environ.get(E2E_USER_ENV, "").strip()
-    password = os.environ.get(E2E_PASS_ENV, "").strip()
-    if username and password:
-        return username, password
-    print(
-        "[get_e2e_credentials] 未完整设置 "
-        f"{E2E_USER_ENV}/{E2E_PASS_ENV}，运行种子脚本并使用默认账号 "
-        f"{DEFAULT_E2E_USER}"
-    )
-    ensure_seed_account()
-    return DEFAULT_E2E_USER, DEFAULT_E2E_PASS
-
-
-def login(
-    backend_url: str = BACKEND_URL,
-    username: str | None = None,
-    password: str | None = None,
-) -> tuple[str, dict]:
-    """POST {backend_url}/api/auth/login 完成登录。
-
-    账号默认取 env LINGSHU_E2E_USER/LINGSHU_E2E_PASS；未设置时自动运行
-    种子脚本（tools/seed_test_env.py，幂等）并使用种子默认账号。
-    非 200 抛 RuntimeError 包含状态码和响应体，返回 (access_token, user_dict)。
-    """
-    if username is None or password is None:
-        env_user, env_pass = get_e2e_credentials()
-        username = username or env_user
-        password = password or env_pass
-    resp = requests.post(
-        f"{backend_url}/api/auth/login",
-        json={"username": username, "password": password},
-        timeout=30,
-    )
+    resp = requests.get(f"{backend_url}/api/auth/me", timeout=30)
     if resp.status_code != 200:
-        raise RuntimeError(f"登录失败: {resp.status_code} {resp.text}")
-    data = resp.json()
-    token = data.get("access_token") or ""
-    user = data.get("user") or {}
-    if not token:
-        raise RuntimeError(f"登录响应缺少 access_token: {data}")
-    return token, user
+        raise RuntimeError(f"查询当前用户失败: {resp.status_code} {resp.text}")
+    return resp.json()
 
 
 class ApiClient:

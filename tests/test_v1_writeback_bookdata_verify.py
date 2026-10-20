@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -118,24 +119,15 @@ def _build_mock_v1_payload(chapters: list[dict[str, Any]]) -> dict[str, Any]:
 
 # ── 辅助: 注册并登录用户 ──────────────────────────────────────────
 def _register_and_login(client: TestClient, username: str, password: str) -> str:
-    """注册并登录用户，返回 access_token。"""
-    resp = client.post(
-        "/api/auth/register",
-        json={"username": username, "password": password, "is_author": 1},
-    )
-    assert resp.status_code in (200, 409), f"注册失败: {resp.status_code} {resp.text}"
-    if resp.status_code == 409:
-        # 用户已存在，直接登录
-        resp = client.post(
-            "/api/auth/login",
-            json={"username": username, "password": password},
-        )
-        assert resp.status_code == 200, f"登录失败: {resp.status_code} {resp.text}"
-    else:
-        # 注册接口返回 token
-        assert resp.status_code == 200
-    data = resp.json()
-    token = data["access_token"]
+    """注册并登录用户，返回 access_token。
+
+    登录/注册端点已随多用户产品线剥离（personal-client P3），
+    此处直接操作 BookstoreStore 数据层获取 token（多用户模式语义不变）。
+    """
+    store = client.app.state.store
+    with contextlib.suppress(Exception):
+        store.create_user(username, password, is_author=1)
+    token = store.login_user(username, password)
     assert token, "未获取到 access_token"
     return token
 

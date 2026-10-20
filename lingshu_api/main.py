@@ -44,46 +44,24 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         lg = logging.getLogger(name)
         lg.setLevel(logging.INFO)
 
-    from lingshu_api.dependencies import set_cloud_store, set_store, set_sync_service
-    from lingshu_api.routers import admin, admin_auth, auth, bookshelf, bookstore, workspace
-    from lingshu_api.services.book_sync import BookSyncService
+    from lingshu_api.dependencies import set_cloud_store, set_store
+    from lingshu_api.routers import auth, workspace
     from lingshu_api.services.db_bridge import WorkspaceDBProvider
-    from novel_app.bookstore import BookstoreStore, CloudBookStore, _admin_usernames_from_env
+    from novel_app.bookstore import BookstoreStore, CloudBookStore
 
     resolved_db_path = db_path or Path(os.environ.get("BOOKSTORE_DB_PATH", "") or DEFAULT_DB_PATH)
     store = BookstoreStore(resolved_db_path)
-    store.sync_admin_users(_admin_usernames_from_env())
 
     cloud_store = CloudBookStore(resolved_db_path)
 
-    class _NonClosingWorkspaceDB:
-        def __init__(self, target):
-            self._target = target
-
-        def __getattr__(self, name):
-            return getattr(self._target, name)
-
-        def close(self):
-            return None
-
     workspace_provider = WorkspaceDBProvider()
-
-    sync_service = BookSyncService(
-        cloud_store=cloud_store,
-        workspace_db_factory=lambda: _NonClosingWorkspaceDB(workspace_provider.get()),
-    )
 
     # lifespan 替代已废弃的 on_event
     @asynccontextmanager
     async def lifespan(application: FastAPI):
-        # startup: 启动 WebSocket 心跳 + 清理过期管理员 Token + WAL checkpoint
+        # startup: 启动 WebSocket 心跳 + WAL checkpoint
         from lingshu_api.ws.connection import get_ws_manager
         ping_task = asyncio.create_task(get_ws_manager().ping_loop())
-        try:
-            from lingshu_api.routers.admin_auth import _get_db_path, cleanup_on_startup
-            cleanup_on_startup(_get_db_path(store))
-        except Exception:
-            pass
         # 启动时执行 WAL checkpoint，清理上次运行遗留的 WAL 数据
         with suppress(Exception):
             workspace_provider.get().db.connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -112,10 +90,9 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         openapi_url=None if _disable_docs else "/openapi.json",
     )
 
-    # 将 store / cloud_store / sync_service 写入 app.state
+    # 将 store / cloud_store 写入 app.state
     set_store(app, store)
     set_cloud_store(app, cloud_store)
-    set_sync_service(app, sync_service)
     app.state.workspace_db_provider = workspace_provider
 
     # 限流
@@ -182,7 +159,6 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         allow_headers=[
             "Authorization",
             "Content-Type",
-            "X-Publish-Token",
             "X-Client-KeyId",
             "X-Client-Ts",
             "X-Client-Sig",
@@ -205,31 +181,6 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         return response
 
     @app.middleware("http")
-    async def _admin_hmac_guard(request, call_next):
-        path = request.url.path
-        # 同时保护 /api/admin/ 和 /api/v1/admin/ 路径
-        is_admin_path = (
-            path.startswith("/api/admin/") or path.startswith("/api/v1/admin/")
-        )
-        is_login = path in ("/api/admin/auth/login", "/api/v1/admin/auth/login")
-        if is_admin_path and not is_login:
-            from fastapi import HTTPException
-
-            from lingshu_api.routers.admin_auth import _admin_keys_configured, verify_admin_hmac_headers
-
-            if not _admin_keys_configured(resolved_db_path):
-                return JSONResponse(
-                    status_code=503,
-                    content={"detail": "管理后台未配置安全密钥，请联系管理员配置 HMAC 密钥后重试"},
-                )
-
-            try:
-                verify_admin_hmac_headers(resolved_db_path, request)
-            except HTTPException as exc:
-                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-        return await call_next(request)
-
-    @app.middleware("http")
     async def _api_v1_alias(request, call_next):
         path = str(request.scope.get("path") or "")
         if path.startswith("/api/v1/"):
@@ -247,10 +198,6 @@ def create_app(db_path: Path | None = None) -> FastAPI:
 
     # 挂载 REST 路由（/api/ 前缀 — 向后兼容）
     app.include_router(auth.router)
-    app.include_router(bookshelf.router)
-    app.include_router(bookstore.router)
-    app.include_router(admin_auth.router)
-    app.include_router(admin.router)
     app.include_router(workspace.router)
 
     # 挂载阶段2新增路由
@@ -288,10 +235,6 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     # 挂载云端同步路由
     from lingshu_api.routers import cloud_books
     app.include_router(cloud_books.router)
-
-    # 挂载社区卡片路由
-    from lingshu_api.routers import community
-    app.include_router(community.router)
 
     # 挂载 WebSocket 路由
     from lingshu_api.ws import analysis_v3_ws, chat, generation, review_ws

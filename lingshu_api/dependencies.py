@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import secrets
 import sqlite3
 import threading
 from collections.abc import Iterator
@@ -16,7 +15,6 @@ from typing import Any
 
 from fastapi import Header, HTTPException, Request
 
-from lingshu_api.services.book_sync import BookSyncService
 from lingshu_api.services.db_bridge import WorkspaceDB
 from novel_app.bookstore import BookstoreStore, CloudBookStore, _bearer_token, _public_user
 
@@ -30,11 +28,6 @@ def set_store(app, store: BookstoreStore) -> None:
 def set_cloud_store(app, cloud_store: CloudBookStore) -> None:
     """设置 CloudBookStore 实例到 app.state（在 create_app 时调用）。"""
     app.state.cloud_store = cloud_store
-
-
-def set_sync_service(app, service: BookSyncService) -> None:
-    """设置 BookSyncService 实例到 app.state（在 create_app 时调用）。"""
-    app.state.sync_service = service
 
 
 # ── FastAPI 依赖：通过 Request.app.state 读取 ──────────────────────
@@ -53,14 +46,6 @@ def get_cloud_store(request: Request) -> CloudBookStore:
     if cloud_store is None:
         raise HTTPException(status_code=500, detail="CloudStore 未初始化")
     return cloud_store
-
-
-def get_sync_service(request: Request) -> BookSyncService:
-    """FastAPI 依赖：获取 BookSyncService 实例。"""
-    sync_service = getattr(request.app.state, 'sync_service', None)
-    if sync_service is None:
-        raise HTTPException(status_code=500, detail="SyncService 未初始化")
-    return sync_service
 
 
 # ── 本地单用户模式（personal-client 分支 P2）──────────────────────
@@ -87,7 +72,7 @@ def _local_user() -> dict[str, Any]:
     结构与 ``novel_app.bookstore.security._public_user`` 返回的用户 dict 同构，
     字段覆盖下游全部使用点（user["id"]/user.get("is_author")/user.get("is_admin")/
     user.get("status")/user.get("username")）。id=1 与 is_admin=1/is_author=1 使
-    require_login/require_author/require_admin 在本地模式全部直通。
+    require_login 等鉴权依赖在本地模式全部直通。
     """
     return {
         "id": 1,
@@ -237,48 +222,7 @@ def _release_ai_slot(user_id: int) -> None:
             _ai_concurrency.pop(user_id, None)
 
 
-def require_author(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
-    """要求已登录且为作者身份。"""
-    user = require_login(request, authorization)
-    if not int(user.get("is_author") or 0):
-        raise HTTPException(status_code=403, detail="当前账号不是作者账号")
-    return user
-
-
-def require_admin(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
-    """要求已登录且为管理员身份。"""
-    user = require_login(request, authorization)
-    if not int(user.get("is_admin") or 0):
-        raise HTTPException(status_code=403, detail="管理员权限不足")
-    return user
-
-
-def verify_publish_token(
-    x_publish_token: str = Header(default=""),
-    resolved_token: str | None = None,
-) -> bool:
-    """验证桌面端发布令牌。"""
-    if not resolved_token:
-        raise HTTPException(status_code=503, detail="发布令牌未配置，已拒绝写入")
-    if not secrets.compare_digest(x_publish_token, resolved_token):
-        raise HTTPException(status_code=401, detail="发布令牌无效")
-    return True
-
-
 _logger = logging.getLogger(__name__)
-
-
-def try_cloud_sync(request: Request, book_id: int, user: dict | None) -> None:
-    """已登录时执行云端同步：静默收集 + 已上传书籍编辑同步。"""
-    if not user:
-        return
-    try:
-        sync_service = get_sync_service(request)
-        user_id = int(user["id"])
-        sync_service.silent_collect(book_id, user_id)
-        sync_service.sync_book_edit(book_id, user_id)
-    except Exception as e:
-        _logger.warning("云端同步失败: book_id=%s, user_id=%s, error=%s", book_id, user.get("id"), e)
 
 
 def check_book_owner(db: WorkspaceDB, book_id: int, user: dict) -> None:

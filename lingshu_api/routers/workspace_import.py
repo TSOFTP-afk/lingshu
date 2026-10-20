@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
-from lingshu_api.dependencies import check_book_owner, require_ai_access, try_cloud_sync
+from lingshu_api.dependencies import check_book_owner, require_ai_access
 from lingshu_api.routers.workspace_common import logger
 from lingshu_api.services.db_bridge import WorkspaceDB, get_workspace_db
 from novel_app.ai.service import SimpleAIService
@@ -152,11 +152,7 @@ async def _handle_file_import(
 
     book_id = int(result["book_id"])
 
-    def _after_import():
-        try_cloud_sync(request, book_id, user)
-        return db.get_book(book_id)
-
-    item = await asyncio.to_thread(_after_import)
+    item = await asyncio.to_thread(db.get_book, book_id)
     volume_count = len({c.volume_title for c in parsed.chapters if c.volume_title})
     return {
         "ok": True,

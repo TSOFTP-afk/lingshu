@@ -12,9 +12,9 @@ from .helpers import (
     FRONTEND_URL,
     ApiClient,
     cleanup_e2e_books,
+    current_user,
     is_backend_up,
     is_frontend_up,
-    login,
     start_backend_subprocess,
     start_frontend_subprocess,
     wait_for,
@@ -175,15 +175,15 @@ def ensure_servers(ensure_backend, frontend_url):
 
 @pytest.fixture(scope="session")
 def auth_token(ensure_backend, backend_url):
-    """用 E2E 账号登录（env LINGSHU_E2E_USER/LINGSHU_E2E_PASS，未设置时自动运行种子脚本），返回 access_token。
+    """本地单用户模式（personal-client P3）：登录端点已剥离，返回空 token。
 
-    登录失败抛异常终止整个 session。
+    以 GET /api/auth/me 作会话前健康检查（本地模式免 token 返回本地用户，
+    失败抛异常终止整个 session）；业务 API 在本地模式下不校验 token
+    （require_login 直通），ApiClient 携带空 token 即可。
     仅依赖后端服务器（ensure_backend），不依赖前端。
     """
-    token, _user = login(backend_url)
-    if not token:
-        raise RuntimeError("登录失败：access_token 为空，终止 session")
-    return token
+    current_user(backend_url)
+    return ""
 
 
 @pytest.fixture(scope="session")

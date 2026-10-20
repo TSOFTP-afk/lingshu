@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from lingshu_api.dependencies import check_book_owner, require_login, try_cloud_sync
+from lingshu_api.dependencies import check_book_owner, require_login
 from lingshu_api.routers.workspace_common import _check_chapter_owner
 from lingshu_api.schemas.workspace import (
     BookCreate,
@@ -70,7 +70,6 @@ async def create_book(request: Request, payload: BookCreate, user: dict = Depend
         book = db.create_book(payload.title, user_id=user_id)
         book_id = int(book["id"])
         book = db.get_book(book_id) or book
-        try_cloud_sync(request, book_id, user)
         return {"ok": True, "item": book}
     return await asyncio.to_thread(_sync)
 
@@ -97,7 +96,6 @@ async def update_book(request: Request, book_id: int, payload: BookUpdate, user:
             raise HTTPException(status_code=404, detail="作品不存在")
         if payload.title:
             db.rename_book(book_id, payload.title)
-        try_cloud_sync(request, book_id, user)
         return {"ok": True, "item": db.get_book(book_id)}
     return await asyncio.to_thread(_sync)
 
@@ -124,7 +122,6 @@ async def create_volume(request: Request, book_id: int, payload: VolumeCreate, u
     def _sync():
         check_book_owner(db, book_id, user)
         vol = db.create_volume(book_id, payload.title)
-        try_cloud_sync(request, book_id, user)
         return {"ok": True, "item": vol}
     return await asyncio.to_thread(_sync)
 
@@ -139,8 +136,6 @@ async def update_volume(request: Request, volume_id: int, payload: VolumeUpdate,
             check_book_owner(db, book_id, user)
         if payload.title:
             db.rename_volume(volume_id, payload.title)
-        if book_id:
-            try_cloud_sync(request, book_id, user)
         return {"ok": True}
     return await asyncio.to_thread(_sync)
 
@@ -154,8 +149,6 @@ async def delete_volume(request: Request, volume_id: int, user: dict = Depends(r
         if book_id:
             check_book_owner(db, book_id, user)
         db.delete_volume(volume_id)
-        if book_id:
-            try_cloud_sync(request, book_id, user)
         return {"ok": True}
     return await asyncio.to_thread(_sync)
 
@@ -174,7 +167,6 @@ async def create_chapter_in_volume(request: Request, volume_id: int, payload: Ch
         book_id = int(volume["book_id"])
         check_book_owner(db, book_id, user)
         ch = db.create_chapter(book_id, payload.title, volume_id)
-        try_cloud_sync(request, book_id, user)
         return {"ok": True, "item": ch}
     return await asyncio.to_thread(_sync)
 
@@ -185,7 +177,6 @@ async def create_chapter_in_book(request: Request, book_id: int, payload: Chapte
     def _sync():
         check_book_owner(db, book_id, user)
         ch = db.create_chapter(book_id, payload.title, None)
-        try_cloud_sync(request, book_id, user)
         return {"ok": True, "item": ch}
     return await asyncio.to_thread(_sync)
 
@@ -262,12 +253,7 @@ async def update_chapter(request: Request, chapter_id: int, payload: ChapterUpda
         kwargs = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
         if kwargs:
             ch = db.update_chapter(chapter_id, **kwargs)
-            book_id = int(ch.get("book_id") or 0) if ch else None
-            if book_id:
-                try_cloud_sync(request, book_id, user)
             return {"ok": True, "item": ch}
-        if book_id:
-            try_cloud_sync(request, book_id, user)
         return {"ok": True, "item": db.get_chapter(chapter_id)}
     return await asyncio.to_thread(_sync)
 
@@ -283,8 +269,6 @@ async def delete_chapter(request: Request, chapter_id: int, user: dict = Depends
         if book_id:
             check_book_owner(db, book_id, user)
         db.delete_chapter(chapter_id)
-        if book_id:
-            try_cloud_sync(request, book_id, user)
         return {"ok": True}
     return await asyncio.to_thread(_sync)
 
@@ -300,8 +284,6 @@ async def move_chapter(request: Request, chapter_id: int, payload: ChapterMove, 
         if book_id:
             check_book_owner(db, book_id, user)
         db.move_chapter(chapter_id, payload.target_volume_id, payload.sort_order)
-        if book_id:
-            try_cloud_sync(request, book_id, user)
         return {"ok": True}
     return await asyncio.to_thread(_sync)
 
@@ -341,7 +323,6 @@ async def save_book_outline(request: Request, book_id: int, payload: BookOutline
         else:
             updated = db.update_book_outline(book_id, outline_text)
         updated_data = db.db.get_book_outline_form(book_id) if db.db else {}
-        try_cloud_sync(request, book_id, user)
         return {
             "ok": True,
             "outline_text": (updated or {}).get("outline_text", ""),

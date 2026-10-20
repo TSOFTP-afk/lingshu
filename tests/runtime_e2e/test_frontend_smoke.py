@@ -1,13 +1,16 @@
-"""前端冒烟测试 — 使用 Playwright 验证登录后能看到 V3 分析运行和写回结果。
+"""前端冒烟测试 — 使用 Playwright 验证本地模式免登录进入工作台后能看到 V3 分析运行和写回结果。
 
 依赖 session 级 fixtures：ensure_frontend, e2e_book_id, e2e_run_id（来自 conftest.py）。
 Playwright 未安装时整体跳过。
+
+personal-client P3：登录 UI（LoginDialog）与 /api/auth/login 已剥离，
+前端以本地单用户模式免登录直达工作台。
 """
 from __future__ import annotations
 
 import pytest
 
-from .helpers import E2E_BOOK_PREFIX, FRONTEND_URL, get_e2e_credentials, is_frontend_up
+from .helpers import E2E_BOOK_PREFIX, FRONTEND_URL, is_frontend_up
 
 # ================================================================
 # Playwright 可用性检测
@@ -73,24 +76,14 @@ def playwright_page(ensure_frontend):
 # 测试用例
 # ================================================================
 
-def test_frontend_login(playwright_page):
-    """登录并打开工作台。"""
+def test_frontend_opens_workspace(playwright_page):
+    """本地模式免登录打开工作台。"""
     page = playwright_page
     try:
-        # 如果未登录，点击未登录按钮打开登录对话框
-        login_title = page.get_by_text("登录灵枢")
-        if not login_title.is_visible():
-            page.get_by_role("button", name="未登录").click()
-        # 输入账号密码
-        e2e_user, e2e_pass = get_e2e_credentials()
-        page.get_by_label("用户名").fill(e2e_user)
-        page.get_by_label("密码").fill(e2e_pass)
-        # 提交登录（点击登录按钮或按回车）
-        page.get_by_role("button", name="登录").click()
-        # 等待跳转到工作台
+        # 本地单用户模式下前端 init 经 /api/auth/me 拿到本地用户，直达工作台
         page.wait_for_url("**/workspace**", timeout=10000)
     except Exception as exc:
-        raise AssertionError(f"前端登录失败: {exc}") from exc
+        raise AssertionError(f"前端未能免登录进入工作台: {exc}") from exc
 
 
 def test_frontend_find_e2e_book(playwright_page, e2e_book_id):

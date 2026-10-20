@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from lingshu_api.dependencies import check_book_owner, require_login, try_cloud_sync
+from lingshu_api.dependencies import check_book_owner, require_login
 from lingshu_api.routers.workspace_common import _check_chapter_owner, logger
 from lingshu_api.schemas.workspace import (
     ChapterItemResponse,
@@ -51,8 +51,6 @@ async def create_snapshot(request: Request, chapter_id: int, body: SnapshotCreat
             check_book_owner(db, book_id, user)
         db.create_snapshot(chapter_id, body.label or "手动快照",
                            ch.get("outline", ""), ch.get("content", ""))
-        if book_id:
-            try_cloud_sync(request, book_id, user)
         return {"ok": True}
     return await asyncio.to_thread(_sync)
 
@@ -69,9 +67,6 @@ async def restore_snapshot(request: Request, chapter_id: int, body: SnapshotRest
         if not result:
             raise HTTPException(status_code=404, detail="快照不存在")
         ch = db.get_chapter(chapter_id)
-        book_id = int(ch.get("book_id") or 0) if ch else None
-        if book_id:
-            try_cloud_sync(request, book_id, user)
         return {"ok": True, "item": db.get_chapter(chapter_id)}
     return await asyncio.to_thread(_sync)
 
@@ -105,8 +100,6 @@ async def create_generation_snapshot(request: Request, chapter_id: int, payload:
                 check_book_owner(db, book_id, user)
             data = payload.model_dump()
             item = db.create_generation_snapshot(chapter_id, data)
-            if book_id:
-                try_cloud_sync(request, book_id, user)
             return {"item": item}
         except HTTPException:
             raise
@@ -147,8 +140,6 @@ async def delete_generation_snapshot(request: Request, snapshot_id: int, user: d
             if book_id:
                 check_book_owner(db, book_id, user)
             db.delete_generation_snapshot(snapshot_id)
-            if book_id:
-                try_cloud_sync(request, book_id, user)
             return None
         except HTTPException:
             raise
@@ -175,8 +166,6 @@ async def restore_generation_snapshot(request: Request, snapshot_id: int, user: 
             result = db.restore_generation_snapshot(snapshot_id)
             if result is None:
                 raise HTTPException(status_code=500, detail="恢复失败")
-            if book_id:
-                try_cloud_sync(request, book_id, user)
             return {"item": result}
         except HTTPException:
             raise

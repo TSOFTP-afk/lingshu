@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import importlib
 
 import pytest
@@ -18,17 +19,12 @@ def client(tmp_path, monkeypatch):
 
     app = create_app(tmp_path / "bookstore.db")
     with TestClient(app) as test_client:
-        # 创建测试用户并获取认证 Token
-        test_client.post("/api/auth/register", json={
-            "username": "testuser",
-            "password": "testpass123",
-            "email": "test@example.com",
-        })
-        login_resp = test_client.post("/api/auth/login", json={
-            "username": "testuser",
-            "password": "testpass123",
-        })
-        token = login_resp.json().get("access_token", "")
+        # 创建测试用户并获取认证 Token（登录端点已剥离，直接操作 store 数据层）
+        store = app.state.store
+        with contextlib.suppress(Exception):
+            store.create_user("testuser", "testpass123")
+        token = store.login_user("testuser", "testpass123")
+        assert token
         test_client.headers["Authorization"] = f"Bearer {token}"
         yield test_client
 

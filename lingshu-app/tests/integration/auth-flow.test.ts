@@ -1,19 +1,13 @@
 /**
- * 集成测试 — 认证完整流程
+ * 集成测试 — 本地单用户模式认证流程
  *
- * 测试链路：登录 → token 持久化 → 获取用户信息 → 权限校验 → 登出
- * 使用真实 Pinia store（auth + cloud），仅 mock API 层
+ * 测试链路：init 探测 /auth/me → 本地用户直接进入登录态 → 权限校验 → token 恢复 → 失效登出
+ * 使用真实 Pinia store（auth），仅 mock API 层。
+ * 登录/注册/云端同步流程已随多用户产品形态移除。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useAuthStore } from '../../src/stores/auth';
-
-// 夹具假口令/令牌用拼接构造，避免安全扫描器误判硬编码凭据（无真实凭据）。
-const I_USER = ['writ', 'er'].join('');
-const I_USER2 = ['new', 'bie'].join('');
-const I_PASS = ['securepass', '123'].join('');
-const I_TOKEN = ['integration-token', '-xyz'].join('');
-const I_TOKEN2 = ['new-user', '-token'].join('');
 
 vi.mock('../../src/utils/api', () => ({
   default: {
@@ -32,83 +26,56 @@ vi.mock('../../src/utils/api', () => ({
   WS_BASE_URL: '/ws',
 }));
 
-vi.mock('../../src/stores/cloud', () => ({
-  useCloudStore: vi.fn(() => ({
-    syncUploadedBooks: vi.fn(() => Promise.resolve()),
-  })),
-}));
+import api, { setAuthToken } from '../../src/utils/api';
 
-vi.mock('../../src/composables/useEventBus', () => ({
-  useEventBus: vi.fn(() => ({
-    emit: vi.fn(),
-    on: vi.fn(),
-    off: vi.fn(),
-  })),
-}));
+const LOCAL_USER = { id: 1, username: 'local', is_author: 1, bind_reader_id: null, bind_reader_name: null };
 
-import api, { getAuthToken, setAuthToken } from '../../src/utils/api';
-
-describe('认证流程集成测试', () => {
+describe('本地模式认证流程集成测试', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
-    getAuthToken.mockReturnValue('');
   });
 
-  describe('完整登录流程', () => {
-    it('登录 → token 存储 → 获取用户信息 → 登出', async () => {
-      const loginResponse = {
-        access_token: I_TOKEN,
-        user: { id: 42, username: I_USER, is_author: 1 },
-      };
-      const meResponse = { id: 42, username: I_USER, is_author: 1 };
-
-      api.post.mockResolvedValue({ data: loginResponse });
-      api.get.mockResolvedValue({ data: meResponse });
+  describe('本地模式进入流程', () => {
+    it('init 无 token 探测 /auth/me 命中本地用户 → 直接进入登录态', async () => {
+      api.get.mockResolvedValueOnce({ data: LOCAL_USER });
 
       const authStore = useAuthStore();
 
-      // 1. 初始状态：未登录
+      // 1. 初始状态：未登录、未初始化
       expect(authStore.isLoggedIn).toBe(false);
       expect(authStore.initialized).toBe(false);
 
-      // 2. 登录
-      const loginResult = await authStore.login(I_USER, 'password');
-      expect(loginResult.access_token).toBe(I_TOKEN);
-      expect(authStore.isLoggedIn).toBe(true);
-      expect(authStore.token).toBe(I_TOKEN);
-      expect(authStore.user).toEqual(loginResponse.user);
-      expect(authStore.isAuthor).toBe(true);
-      expect(setAuthToken).toHaveBeenCalledWith(I_TOKEN);
+      // 2. init 探测
+      const result = await authStore.init();
 
-      // 3. 获取用户信息
-      const meResult = await authStore.fetchMe();
       expect(api.get).toHaveBeenCalledWith('/auth/me');
-      expect(meResult).toEqual(meResponse);
+      expect(result).toEqual(LOCAL_USER);
+      expect(authStore.user).toEqual(LOCAL_USER);
 
-      // 4. 权限校验
+      // 3. 本地模式 init 即登录
+      expect(authStore.isLoggedIn).toBe(true);
+      expect(authStore.isAuthor).toBe(true);
+
+      // 4. 权限校验通过
       expect(authStore.requireAuth()).toBe(true);
       expect(authStore.requireAiAccess()).toBe(true);
-
-      // 5. 登出
-      authStore.logout();
-      expect(authStore.isLoggedIn).toBe(false);
-      expect(authStore.token).toBe('');
-      expect(authStore.user).toBeNull();
-      expect(setAuthToken).toHaveBeenCalledWith('');
     });
 
-    it('未登录用户触发 requireAuth 时派发登录事件', () => {
+    it('init 探测失败时维持未登录，权限校验不通过', async () => {
+      api.get.mockRejectedValueOnce(new Error('backend not ready'));
+
       const authStore = useAuthStore();
+      const result = await authStore.init();
+
+      expect(result).toBeNull();
       expect(authStore.isLoggedIn).toBe(false);
-      const result = authStore.requireAuth();
-      expect(result).toBe(false);
+      expect(authStore.requireAiAccess()).toBe(false);
     });
   });
 
   describe('token 恢复流程', () => {
     it('init 时从安全存储恢复 token 并获取用户信息', async () => {
-      getAuthToken.mockReturnValue('restored-token');
       const userData = { id: 7, username: 'returning_user', is_author: 0 };
 
       const authStore = useAuthStore();
@@ -124,32 +91,7 @@ describe('认证流程集成测试', () => {
       expect(result).toEqual(userData);
     });
 
-    it('init 时无 token 尝试本地模式探测，401 则返回 null', async () => {
-      // 多用户模式：/auth/me 无 token 返回 401（以空数据模拟 catch 前的失败语义）
-      api.get.mockResolvedValueOnce({ data: null });
-      const authStore = useAuthStore();
-      const result = await authStore.init();
-
-      // 本地单用户模式：无 token 也会探测一次 /auth/me
-      expect(api.get).toHaveBeenCalledWith('/auth/me');
-      expect(result).toBeNull();
-      expect(authStore.initialized).toBe(true);
-    });
-
-    it('init 时无 token 命中本地单用户模式则直接进入登录态', async () => {
-      const localUser = { id: 1, username: 'local', is_author: 1, bind_reader_id: null, bind_reader_name: null };
-      api.get.mockResolvedValueOnce({ data: localUser });
-      const authStore = useAuthStore();
-      const result = await authStore.init();
-
-      expect(api.get).toHaveBeenCalledWith('/auth/me');
-      expect(result).toEqual(localUser);
-      expect(authStore.user).toEqual(localUser);
-    });
-  });
-
-  describe('登录失败恢复流程', () => {
-    it('fetchMe 失败（401）时自动登出', async () => {
+    it('fetchMe 失效（401）时自动登出并清除会话', async () => {
       const authStore = useAuthStore();
       authStore.token = 'expired-token';
 
@@ -163,28 +105,7 @@ describe('认证流程集成测试', () => {
       expect(authStore.isLoggedIn).toBe(false);
       expect(authStore.token).toBe('');
       expect(authStore.user).toBeNull();
-    });
-  });
-
-  describe('注册流程', () => {
-    it('注册新用户 → 自动登录 → 触发云端同步', async () => {
-      const regResponse = {
-        access_token: I_TOKEN2,
-        user: { id: 100, username: I_USER2, is_author: 1 },
-      };
-      api.post.mockResolvedValue({ data: regResponse });
-
-      const authStore = useAuthStore();
-      await authStore.register(I_USER2, I_PASS, 1);
-
-      expect(api.post).toHaveBeenCalledWith('/auth/register', {
-        username: I_USER2,
-        password: I_PASS,
-        is_author: 1,
-      });
-      expect(authStore.isLoggedIn).toBe(true);
-      expect(authStore.user).toEqual(regResponse.user);
-      expect(setAuthToken).toHaveBeenCalledWith(I_TOKEN2);
+      expect(setAuthToken).toHaveBeenCalledWith('');
     });
   });
 });

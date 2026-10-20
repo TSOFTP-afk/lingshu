@@ -31,15 +31,15 @@ def _save_report(request):  # noqa: ARG001
 # 测试用例 001-012
 # ================================================================
 
-def test_001_login(api_client: ApiClient):
-    """账号 001 / 密码 12345678a 登录成功（由 auth_token fixture 保证）。"""
+def test_001_session_ready(api_client: ApiClient):
+    """本地模式会话就绪（由 auth_token fixture 保证后端 /api/auth/me 可达）。"""
     try:
-        # 如果 api_client fixture 成功，说明登录成功
+        # api_client 可用且 list_books 正常返回，说明本地模式会话已就绪
         books = api_client.list_books()
         assert isinstance(books, list)
-        report.record("账号 001 登录", True, f"获取到 {len(books)} 本书")
+        report.record("本地模式会话就绪", True, f"获取到 {len(books)} 本书")
     except Exception:
-        report.record("账号 001 登录", False, "登录或 list_books 失败")
+        report.record("本地模式会话就绪", False, "会话未就绪或 list_books 失败")
         raise
 
 

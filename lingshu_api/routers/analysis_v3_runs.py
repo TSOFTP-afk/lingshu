@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from lingshu_api.dependencies import check_book_owner, get_store, require_login, try_cloud_sync
+from lingshu_api.dependencies import check_book_owner, get_store, require_login
 from lingshu_api.schemas.analysis_v3 import AnalysisV3IncrementalRunCreate, AnalysisV3RunCreate
 from lingshu_api.services.db_bridge import WorkspaceDB, get_workspace_db
 from novel_app.analysis.pipeline_v3 import PIPELINE_V3_VERSION, AnalysisPipelineV3
@@ -221,7 +221,6 @@ async def create_analysis_v3_run(
         )
     store = AnalysisStore(db.db)
     run = await asyncio.to_thread(store.get_run, result.run_id)
-    try_cloud_sync(request, book_id, user)
     return {"ok": True, "item": _analysis_v3_run_item(run), **result.as_dict()}
 
 
@@ -266,7 +265,6 @@ async def create_analysis_v3_incremental_run(
         )
     store = AnalysisStore(db.db)
     run = await asyncio.to_thread(store.get_run, result.run_id)
-    try_cloud_sync(request, book_id, user)
     return {"ok": True, "item": _analysis_v3_run_item(run), **result.as_dict()}
 
 

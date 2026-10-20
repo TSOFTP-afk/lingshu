@@ -7,7 +7,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from lingshu_api.dependencies import check_book_owner, require_login, try_cloud_sync
+from lingshu_api.dependencies import check_book_owner, require_login
 from lingshu_api.schemas.workspace import WorldSave
 from lingshu_api.services.db_bridge import WorkspaceDB, get_workspace_db
 from novel_app.structured_templates import WORLD_FORM_SCHEMA
@@ -45,7 +45,6 @@ def save_world(request: Request, book_id: int, payload: WorldSave, user: dict = 
         world_data,
     )
     world_data = db.db.get_book_world_form(book_id)
-    try_cloud_sync(request, book_id, user)
     return {
         "ok": True,
         "world_text": (updated or {}).get("world_text", ""),

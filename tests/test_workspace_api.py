@@ -44,17 +44,6 @@ def _workspace_db(client: TestClient):
     return client.app.state.workspace_db_provider.get()
 
 
-class _CapturingSyncService:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, int, int]] = []
-
-    def silent_collect(self, book_id: int, user_id: int) -> None:
-        self.calls.append(("silent_collect", int(book_id), int(user_id)))
-
-    def sync_book_edit(self, book_id: int, user_id: int) -> None:
-        self.calls.append(("sync_book_edit", int(book_id), int(user_id)))
-
-
 def _import_file(content: str, filename: str = "import.txt") -> dict:
     return {"file": (filename, content.encode("utf-8"), "text/plain")}
 
@@ -112,58 +101,44 @@ def test_workspace_books_volumes_chapters_and_outline(client: TestClient) -> Non
     assert client.patch("/api/workspace/chapters/99999", json={}).status_code == 404
 
 
-def test_workspace_import_refresh_payload_and_cloud_sync(client: TestClient) -> None:
-    from lingshu_api.dependencies import set_sync_service
+def test_workspace_import_refresh_payload(client: TestClient) -> None:
+    imported = client.post(
+        "/api/workspace/import-file",
+        params={"skip_volumes": "true"},
+        files=_import_file("第一章 初见\n林一抵达镜湖。\n\n第二章 风起\n旧案浮出水面。"),
+    )
 
-    app = client.app
-    original_sync_service = app.state.sync_service
-    sync_service = _CapturingSyncService()
-    set_sync_service(app, sync_service)
-    try:
-        imported = client.post(
-            "/api/workspace/import-file",
-            params={"skip_volumes": "true"},
-            files=_import_file("第一章 初见\n林一抵达镜湖。\n\n第二章 风起\n旧案浮出水面。"),
-        )
+    assert imported.status_code == 200
+    data = imported.json()
+    book_id = int(data["book_id"])
+    assert data["item"]["id"] == book_id
+    assert data["item"]["title"] == "import"
+    assert data["first_chapter_id"]
+    assert data["stats"]["chapter_count"] >= 1
 
-        assert imported.status_code == 200
-        data = imported.json()
-        book_id = int(data["book_id"])
-        assert data["item"]["id"] == book_id
-        assert data["item"]["title"] == "import"
-        assert data["first_chapter_id"]
-        assert data["stats"]["chapter_count"] >= 1
-        assert [call[0] for call in sync_service.calls] == ["silent_collect", "sync_book_edit"]
-        assert {call[1] for call in sync_service.calls} == {book_id}
+    listed = client.get("/api/workspace/books")
+    assert listed.status_code == 200
+    assert any(int(item["id"]) == book_id for item in listed.json()["items"])
 
-        listed = client.get("/api/workspace/books")
-        assert listed.status_code == 200
-        assert any(int(item["id"]) == book_id for item in listed.json()["items"])
+    appended = client.post(
+        f"/api/workspace/books/{book_id}/import-file",
+        params={"skip_volumes": "true"},
+        files=_import_file("第三章 再会\n新的线索出现。", filename="append.txt"),
+    )
 
-        sync_service.calls.clear()
-        appended = client.post(
-            f"/api/workspace/books/{book_id}/import-file",
-            params={"skip_volumes": "true"},
-            files=_import_file("第三章 再会\n新的线索出现。", filename="append.txt"),
-        )
+    assert appended.status_code == 200
+    appended_data = appended.json()
+    assert int(appended_data["book_id"]) == book_id
+    assert appended_data["item"]["id"] == book_id
 
-        assert appended.status_code == 200
-        appended_data = appended.json()
-        assert int(appended_data["book_id"]) == book_id
-        assert appended_data["item"]["id"] == book_id
-        assert [call[0] for call in sync_service.calls] == ["silent_collect", "sync_book_edit"]
-        assert {call[1] for call in sync_service.calls} == {book_id}
-
-        refreshed = client.get(f"/api/workspace/books/{book_id}")
-        assert refreshed.status_code == 200
-        chapters = [
-            chapter
-            for volume in refreshed.json()["volumes"]
-            for chapter in (volume.get("chapters") or [])
-        ]
-        assert len(chapters) >= 2
-    finally:
-        set_sync_service(app, original_sync_service)
+    refreshed = client.get(f"/api/workspace/books/{book_id}")
+    assert refreshed.status_code == 200
+    chapters = [
+        chapter
+        for volume in refreshed.json()["volumes"]
+        for chapter in (volume.get("chapters") or [])
+    ]
+    assert len(chapters) >= 2
 
 def test_workspace_private_routes_require_login_and_owner(client: TestClient) -> None:
     from novel_app.analysis.pipeline import AnalysisPipeline
