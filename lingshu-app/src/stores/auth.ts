@@ -1,63 +1,40 @@
 /**
- * 认证 Store — 用户登录状态管理
+ * 认证 Store — 本地单用户模式入口
+ *
+ * 本地模式下后端 /auth/me 无 token 也返回本地用户（200），
+ * init() 探测成功即视为登录态，前端不再提供登录/注册/登出界面。
  */
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import api, { getAuthToken, setAuthToken, tokenReady } from '../utils/api';
-import { useCloudStore } from './cloud';
-import { useEventBus } from '../composables/useEventBus';
-import type { AuthUser, LoginResponse, ApiError } from '../../../shared/types';
+import type { AuthUser } from '../../../shared/types';
 
-// AuthUser / LoginResponse / ApiError 已迁移至 ../../../shared/types（V5-P3-05），
+// AuthUser 已迁移至 ../../../shared/types（V5-P3-05），
 // 此处通过 re-export 保留对外契约，避免破坏现有 import { AuthUser } from './auth' 的代码。
-export type { AuthUser, LoginResponse };
+export type { AuthUser };
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string>(getAuthToken() || '');
   const user = ref<AuthUser | null>(null);
   const initialized = ref<boolean>(false);
-  const loading = ref<boolean>(false);
-  const error = ref<string>('');
 
-  const isLoggedIn = computed<boolean>(() => !!token.value);
+  // 本地模式：init 探测 /auth/me 命中本地用户（无 token）即视为已登录
+  const isLoggedIn = computed<boolean>(() => Boolean(token.value || user.value));
   const isAuthor = computed<boolean>(() => user.value?.is_author === 1);
-
-  async function login(username: string, password: string): Promise<LoginResponse> {
-    return runAuthRequest(async () => {
-      const { data } = await api.post('/auth/login', { username, password });
-      applySession(data);
-      triggerCloudSync();
-      return data;
-    });
-  }
-
-  async function register(username: string, password: string, isAuthor: number = 1): Promise<LoginResponse> {
-    return runAuthRequest(async () => {
-      const { data } = await api.post('/auth/register', { username, password, is_author: isAuthor });
-      applySession(data);
-      triggerCloudSync();
-      return data;
-    });
-  }
 
   async function fetchMe(): Promise<AuthUser | null> {
     if (!token.value) {
       initialized.value = true;
       return null;
     }
-    loading.value = true;
-    error.value = '';
     try {
       const { data } = await api.get('/auth/me');
       user.value = data;
       initialized.value = true;
       return data;
-    } catch (e: unknown) {
-      error.value = authErrorMessage(e as ApiError);
+    } catch {
       logout();
       return null;
-    } finally {
-      loading.value = false;
     }
   }
 
@@ -69,8 +46,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
     if (!token.value) {
       // 本地单用户模式：后端 /auth/me 无 token 也返回本地用户（200），
-      // 借此免登录直达工作台；多用户模式返回 401，走 catch 维持未登录（原行为）。
-      loading.value = true;
+      // 借此免登录直达工作台。
       try {
         const { data } = await api.get('/auth/me');
         const me = (data as AuthUser | null) ?? null;
@@ -78,11 +54,9 @@ export const useAuthStore = defineStore('auth', () => {
         initialized.value = true;
         return me;
       } catch {
-        // 多用户模式 401：静默维持未登录，不弹错误
+        // 探测失败（后端未就绪等）：静默维持未登录，不弹错误
         initialized.value = true;
         return null;
-      } finally {
-        loading.value = false;
       }
     }
     return fetchMe();
@@ -91,54 +65,12 @@ export const useAuthStore = defineStore('auth', () => {
   function logout(): void {
     token.value = '';
     user.value = null;
-    error.value = '';
     initialized.value = true;
     setAuthToken('');
   }
 
-  function applySession(data: LoginResponse | null): void {
-    const accessToken = data?.access_token || '';
-    token.value = accessToken;
-    user.value = data?.user || null;
-    initialized.value = true;
-    error.value = '';
-    setAuthToken(accessToken);
-  }
-
-  async function runAuthRequest<T>(action: () => Promise<T>): Promise<T> {
-    loading.value = true;
-    error.value = '';
-    try {
-      return await action();
-    } catch (e: unknown) {
-      error.value = authErrorMessage(e as ApiError);
-      throw e;
-    } finally {
-      loading.value = false;
-    }
-  }
-
-  function authErrorMessage(e: ApiError): string {
-    const detail = e?.response?.data?.detail;
-    if (typeof detail === 'string') return detail;
-    if (detail && typeof detail === 'object') return detail.message || '认证失败';
-    return e?.message || '认证失败';
-  }
-
-  function triggerCloudSync(): void {
-    try {
-      const cloudStore = useCloudStore();
-      cloudStore.syncUploadedBooks().catch(() => {});
-    } catch {
-      // cloud store 未初始化时忽略
-    }
-  }
-
   function requireAuth(): boolean {
-    if (isLoggedIn.value) return true;
-    const { emit } = useEventBus();
-    emit('lingshu:open-login');
-    return false;
+    return isLoggedIn.value;
   }
 
   function requireAiAccess(): boolean {
@@ -149,13 +81,9 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     user,
     initialized,
-    loading,
-    error,
     isLoggedIn,
     isAuthor,
     init,
-    login,
-    register,
     fetchMe,
     logout,
     requireAuth,

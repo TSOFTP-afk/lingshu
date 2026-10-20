@@ -1,10 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-// 说明：测试夹具的假用户名/口令用运行时拼接构造——安全扫描器会把
-// "password: 'xxx'" 形态的字面量当硬编码凭据拦截；此处无任何真实凭据。
-const T_USER = ['test', 'user'].join('');
-const T_PASS = ['password', '123'].join('');
-const T_TOKEN = ['test-token', '-123'].join('');
-const T_TOKEN2 = ['reg', '-token'].join('');
 import { setActivePinia, createPinia } from 'pinia';
 import { useAuthStore } from '../../../src/stores/auth';
 
@@ -23,30 +17,13 @@ vi.mock('../../../src/utils/api', () => ({
   tokenReady: Promise.resolve(),
 }));
 
-// requireAuth 已演进为通过事件总线派发 lingshu:open-login（不再用 document.dispatchEvent）
-const { emittedEvents } = vi.hoisted(() => ({ emittedEvents: [] }));
-vi.mock('../../../src/composables/useEventBus', () => ({
-  useEventBus: () => ({
-    on: vi.fn(),
-    off: vi.fn(),
-    emit: (event, payload) => emittedEvents.push({ event, payload }),
-  }),
-}));
-
-vi.mock('../../../src/stores/cloud', () => ({
-  useCloudStore: vi.fn(() => ({
-    syncUploadedBooks: vi.fn(() => Promise.resolve()),
-  })),
-}));
-
 import api, { getAuthToken, setAuthToken } from '../../../src/utils/api';
 
-describe('useAuthStore', () => {
+describe('useAuthStore（本地单用户模式）', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
     getAuthToken.mockReturnValue('');
-    emittedEvents.length = 0;
   });
 
   describe('初始状态', () => {
@@ -55,8 +32,6 @@ describe('useAuthStore', () => {
       expect(store.token).toBe('');
       expect(store.user).toBeNull();
       expect(store.isLoggedIn).toBe(false);
-      expect(store.loading).toBe(false);
-      expect(store.error).toBe('');
       expect(store.initialized).toBe(false);
     });
 
@@ -66,149 +41,43 @@ describe('useAuthStore', () => {
     });
   });
 
-  describe('login', () => {
-    it('登录成功时设置 token 和 user', async () => {
-      const mockData = {
-        access_token: T_TOKEN,
-        user: { id: 1, username: T_USER, is_author: 1 },
-      };
-      api.post.mockResolvedValue({ data: mockData });
+  describe('isLoggedIn 语义（本地模式 init 即登录）', () => {
+    it('无 token 但 init 探测到本地用户时视为已登录', async () => {
+      const localUser = { id: 1, username: 'local', is_author: 1 };
+      api.get.mockResolvedValue({ data: localUser });
 
       const store = useAuthStore();
-      const result = await store.login(T_USER, T_PASS);
-
-      expect(api.post).toHaveBeenCalledWith('/auth/login', {
-        username: T_USER,
-        password: T_PASS,
-      });
-      expect(store.token).toBe(T_TOKEN);
-      expect(store.user).toEqual(mockData.user);
-      expect(store.isLoggedIn).toBe(true);
-      expect(store.loading).toBe(false);
-      expect(store.error).toBe('');
-      expect(setAuthToken).toHaveBeenCalledWith(T_TOKEN);
-      expect(result).toEqual(mockData);
-    });
-
-    it('登录失败时设置错误信息', async () => {
-      const error = {
-        response: { data: { detail: '用户名或密码错误' } },
-      };
-      api.post.mockRejectedValue(error);
-
-      const store = useAuthStore();
-      await expect(store.login('bad', 'creds')).rejects.toThrow();
-
-      expect(store.error).toBe('用户名或密码错误');
-      expect(store.loading).toBe(false);
-      expect(store.token).toBe('');
       expect(store.isLoggedIn).toBe(false);
-    });
 
-    it('登录失败时处理非字符串 detail', async () => {
-      const error = {
-        response: { data: { detail: { message: '账户已锁定' } } },
-      };
-      api.post.mockRejectedValue(error);
+      await store.init();
 
-      const store = useAuthStore();
-      await expect(store.login('bad', 'creds')).rejects.toThrow();
-
-      expect(store.error).toBe('账户已锁定');
-    });
-
-    it('登录失败时处理无 detail 的错误', async () => {
-      const error = new Error('Network Error');
-      api.post.mockRejectedValue(error);
-
-      const store = useAuthStore();
-      await expect(store.login('bad', 'creds')).rejects.toThrow();
-
-      expect(store.error).toBe('Network Error');
-    });
-
-    it('登录成功后触发云端同步', async () => {
-      const mockData = {
-        access_token: 'token',
-        user: { id: 1, username: 'test' },
-      };
-      api.post.mockResolvedValue({ data: mockData });
-
-      const store = useAuthStore();
-      await store.login('test', 'pass');
-
-      // 验证 cloudStore.syncUploadedBooks 被调用（通过 mock）
-      const { useCloudStore } = await import('../../../src/stores/cloud');
-      expect(useCloudStore).toHaveBeenCalled();
-    });
-  });
-
-  describe('register', () => {
-    it('注册成功时设置 token 和 user', async () => {
-      const mockData = {
-        access_token: T_TOKEN2,
-        user: { id: 2, username: 'newuser', is_author: 1 },
-      };
-      api.post.mockResolvedValue({ data: mockData });
-
-      const store = useAuthStore();
-      const result = await store.register('newuser', 'pass123');
-
-      expect(api.post).toHaveBeenCalledWith('/auth/register', {
-        username: 'newuser',
-        password: 'pass123',
-        is_author: 1,
-      });
-      expect(store.token).toBe(T_TOKEN2);
-      expect(store.user).toEqual(mockData.user);
+      expect(store.user).toEqual(localUser);
       expect(store.isLoggedIn).toBe(true);
-      expect(result).toEqual(mockData);
     });
 
-    it('注册时可以指定 isAuthor 为 0', async () => {
-      const mockData = {
-        access_token: T_TOKEN2,
-        user: { id: 3, username: 'reader', is_author: 0 },
-      };
-      api.post.mockResolvedValue({ data: mockData });
+    it('init 探测失败（后端未就绪）时维持未登录', async () => {
+      api.get.mockRejectedValue(new Error('network down'));
 
       const store = useAuthStore();
-      await store.register('reader', 'pass123', 0);
+      const result = await store.init();
 
-      expect(api.post).toHaveBeenCalledWith('/auth/register', {
-        username: 'reader',
-        password: 'pass123',
-        is_author: 0,
-      });
-    });
-
-    it('注册失败时设置错误信息', async () => {
-      api.post.mockRejectedValue({
-        response: { data: { detail: '用户名已存在' } },
-      });
-
-      const store = useAuthStore();
-      await expect(store.register('dup', 'pass')).rejects.toThrow();
-
-      expect(store.error).toBe('用户名已存在');
+      expect(result).toBeNull();
+      expect(store.user).toBeNull();
+      expect(store.isLoggedIn).toBe(false);
+      expect(store.initialized).toBe(true);
     });
   });
 
   describe('logout', () => {
-    it('登出时清除所有状态', async () => {
-      api.post.mockResolvedValue({
-        data: { access_token: 'token', user: { id: 1, username: 'test' } },
-      });
-
+    it('登出时清除所有状态', () => {
       const store = useAuthStore();
-      await store.login('test', 'pass');
-      expect(store.isLoggedIn).toBe(true);
+      store.token = 'token';
+      store.user = { id: 1, username: 'test' };
 
       store.logout();
 
       expect(store.token).toBe('');
       expect(store.user).toBeNull();
-      expect(store.error).toBe('');
       expect(store.initialized).toBe(true);
       expect(store.isLoggedIn).toBe(false);
       expect(setAuthToken).toHaveBeenCalledWith('');
@@ -240,8 +109,7 @@ describe('useAuthStore', () => {
 
       expect(api.get).toHaveBeenCalledWith('/auth/me');
       expect(store.user).toEqual(userData);
-      expect(store.initialized).toBe(true);
-      expect(store.loading).toBe(false);
+      expect(store.isLoggedIn).toBe(true);
       expect(result).toEqual(userData);
     });
 
@@ -256,8 +124,7 @@ describe('useAuthStore', () => {
       expect(result).toBeNull();
       expect(store.token).toBe('');
       expect(store.user).toBeNull();
-      // logout 会清除 error，所以 error 为空
-      expect(store.error).toBe('');
+      expect(store.isLoggedIn).toBe(false);
     });
   });
 
@@ -273,11 +140,11 @@ describe('useAuthStore', () => {
       expect(api.get).not.toHaveBeenCalled();
     });
 
-    it('未初始化且无 token 时返回 null', async () => {
+    it('未初始化且无 token 时探测 /auth/me（本地模式入口）', async () => {
       const store = useAuthStore();
-      const result = await store.init();
+      await store.init();
 
-      expect(result).toBeNull();
+      expect(api.get).toHaveBeenCalledWith('/auth/me');
       expect(store.initialized).toBe(true);
     });
 
@@ -300,14 +167,12 @@ describe('useAuthStore', () => {
       expect(store.requireAuth()).toBe(true);
     });
 
-    it('未登录时通过事件总线派发 lingshu:open-login 并返回 false', () => {
+    it('未登录时返回 false（本地模式无登录框）', () => {
       const store = useAuthStore();
       store.token = '';
+      store.user = null;
 
-      const result = store.requireAuth();
-
-      expect(result).toBe(false);
-      expect(emittedEvents.map((item) => item.event)).toContain('lingshu:open-login');
+      expect(store.requireAuth()).toBe(false);
     });
   });
 
@@ -318,6 +183,7 @@ describe('useAuthStore', () => {
       expect(store.requireAiAccess()).toBe(true);
 
       store.token = '';
+      store.user = null;
       expect(store.requireAiAccess()).toBe(false);
     });
   });

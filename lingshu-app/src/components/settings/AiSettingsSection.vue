@@ -1,23 +1,6 @@
 <template>
   <section class="settings-section ai-settings-section">
-    <div
-      v-if="!auth.isLoggedIn"
-      class="ai-login-gate"
-    >
-      <el-empty
-        description="AI 配置需要登录后使用"
-        :image-size="64"
-      >
-        <el-button
-          type="primary"
-          @click="useEventBus().emit('lingshu:open-login')"
-        >
-          登录
-        </el-button>
-      </el-empty>
-    </div>
-    <template v-else>
-      <div class="section-heading">
+    <div class="section-heading">
         <div>
           <h2>AI 配置</h2>
           <p>按用途分别配置模型、API Key 和生成参数，生成、审查、分析和对话会读取各自用途。</p>
@@ -330,7 +313,6 @@
           </el-tab-pane>
         </el-tabs>
       </div>
-    </template>
   </section>
 </template>
 
@@ -338,7 +320,6 @@
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { Refresh, Upload } from '@element-plus/icons-vue';
-import { useEventBus } from '../../composables/useEventBus';
 import {
   DEFAULT_AI_PROVIDER,
   DEFAULT_BASE_URL,
@@ -349,10 +330,8 @@ import {
   modelPresetsForProvider,
   shouldShowReasoningEffort,
 } from '../../constants/aiProviders';
-import { useAuthStore } from '../../stores/auth';
 import api from '../../utils/api';
 
-const auth = useAuthStore();
 const FALLBACK_PURPOSES = [
   ['writing', '写作生成', '章节草稿生成、续写、润色'],
   ['outline', '同步大纲', '根据正文同步章节或书籍大纲'],
@@ -536,11 +515,6 @@ function normalizeProfile(profile = {}) {
 </script>
 
 <style scoped>
-.ai-login-gate {
-  display: flex;
-  justify-content: center;
-  padding: 40px 0;
-}
 .settings-section {
   display: flex;
   flex-direction: column;

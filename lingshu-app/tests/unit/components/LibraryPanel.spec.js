@@ -8,7 +8,6 @@ const sampleBooks = [
   {
     id: 1,
     title: '灵枢指南',
-    cloud_book_id: null,
     word_count: 5000,
     volumes: [
       {
@@ -31,7 +30,6 @@ const sampleBooks = [
   {
     id: 2,
     title: '第二本书',
-    cloud_book_id: 99,
     word_count: 3000,
     volumes: [
       {

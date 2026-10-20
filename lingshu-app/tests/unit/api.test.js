@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { emittedEvents } = vi.hoisted(() => ({ emittedEvents: [] }));
-
 // ============================================================
 //  Mocks — 必须在 import api.js 之前设置
 // ============================================================
@@ -28,12 +26,6 @@ vi.mock('axios', () => {
   };
 });
 
-vi.mock('../../src/composables/useEventBus', () => ({
-  useEventBus: () => ({
-    emit: (event, payload) => emittedEvents.push({ event, payload }),
-  }),
-}));
-
 // Helper: reset interceptor arrays per test
 function resetInterceptors() {
   _requestInterceptors.length = 0;
@@ -59,7 +51,6 @@ describe('api.js', () => {
 
     // Reset localStorage
     localStorage.clear();
-    emittedEvents.length = 0;
     vi.clearAllMocks();
 
     // Clear document.dispatchEvent mock
@@ -211,49 +202,24 @@ describe('api.js', () => {
       expect(apiModule.getAuthToken()).toBe('');
     });
 
-    it('dispatches auth-expired and open-login events on 401 for non-auth requests', async () => {
-      const error = {
-        response: { status: 401 },
-        config: { url: '/some/protected' },
-      };
-      await expect(rejectedHandler(error)).rejects.toBe(error);
-      expect(emittedEvents.map((item) => item.event)).toEqual([
-        'lingshu:auth-expired',
-        'lingshu:open-login',
-      ]);
-    });
-
-    it('does NOT dispatch events for /auth/login requests', async () => {
+    it('clears token storage on 401 even for auth endpoint errors', async () => {
+      apiModule.setAuthToken('stale-token');
       const error = {
         response: { status: 401 },
         config: { url: '/auth/login' },
       };
       await expect(rejectedHandler(error)).rejects.toBe(error);
-      expect(window.dispatchEvent).not.toHaveBeenCalled();
-      expect(document.dispatchEvent).not.toHaveBeenCalled();
-      expect(emittedEvents).toEqual([]);
+      expect(apiModule.getAuthToken()).toBe('');
     });
 
-    it('does NOT dispatch events for /auth/register requests', async () => {
-      const error = {
-        response: { status: 401 },
-        config: { url: '/auth/register' },
-      };
-      await expect(rejectedHandler(error)).rejects.toBe(error);
-      expect(window.dispatchEvent).not.toHaveBeenCalled();
-      expect(document.dispatchEvent).not.toHaveBeenCalled();
-      expect(emittedEvents).toEqual([]);
-    });
-
-    it('does not dispatch events for non-401 errors', async () => {
+    it('keeps token storage for non-401 errors', async () => {
+      apiModule.setAuthToken('keep-me');
       const error = {
         response: { status: 500 },
         config: { url: '/some/endpoint' },
       };
       await expect(rejectedHandler(error)).rejects.toBe(error);
-      expect(window.dispatchEvent).not.toHaveBeenCalled();
-      expect(document.dispatchEvent).not.toHaveBeenCalled();
-      expect(emittedEvents).toEqual([]);
+      expect(apiModule.getAuthToken()).toBe('keep-me');
     });
 
     it('rejects the promise with the original error', async () => {

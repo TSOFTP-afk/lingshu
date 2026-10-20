@@ -16,59 +16,15 @@
     }"
     aria-label="侧边导航"
   >
-    <!-- 顶部账号区 -->
+    <!-- 顶部本地模式标识 -->
     <div class="sidenav-account">
-      <el-dropdown
-        v-if="auth.isLoggedIn"
-        ref="accountDropdownRef"
-        trigger="click"
-        @command="handleAccountCommand"
-        @visible-change="onAccountDropdownVisibleChange"
-      >
-        <button
-          class="account-chip"
-          type="button"
-          aria-haspopup="true"
-          :aria-expanded="accountDropdownVisible ? 'true' : 'false'"
-          :aria-label="`账号菜单：${accountName}`"
-        >
-          <span class="account-avatar">{{ accountInitial }}</span>
-          <span
-            v-if="!isCollapsedMode"
-            class="account-name"
-          >{{ accountName }}</span>
-          <span
-            v-if="!isCollapsedMode"
-            class="account-dot online"
-          />
-        </button>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item command="settings">
-              账号设置
-            </el-dropdown-item>
-            <el-dropdown-item
-              divided
-              command="logout"
-            >
-              退出登录
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
-      <button
-        v-else
-        class="account-chip"
-        type="button"
-        aria-label="点击登录灵枢账号"
-        @click="openLogin"
-      >
+      <div class="account-chip account-chip--static">
         <span class="account-avatar">灵</span>
         <span
           v-if="!isCollapsedMode"
           class="account-name"
-        >未登录</span>
-      </button>
+        >本地创作</span>
+      </div>
     </div>
 
     <!-- 中部导航项 -->
@@ -145,14 +101,12 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElMessage } from 'element-plus';
 import {
   Connection,
   DataAnalysis,
   Document,
   Files,
   Setting,
-  Share,
 } from '@element-plus/icons-vue';
 import { useEventBus } from '../../composables/useEventBus';
 import { useAuthStore } from '../../stores/auth';
@@ -177,13 +131,6 @@ const theme = useThemeStore();
 // 视口断点状态
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1920);
 
-// 账号下拉菜单可见性（用于同步 aria-expanded）
-const accountDropdownVisible = ref(false);
-const accountDropdownRef = ref(null);
-function onAccountDropdownVisibleChange(visible) {
-  accountDropdownVisible.value = visible;
-}
-
 function onResize() {
   viewportWidth.value = window.innerWidth;
 }
@@ -200,14 +147,10 @@ onUnmounted(() => {
 const isCollapsedMode = computed(() => viewportWidth.value >= 768 && viewportWidth.value < 1024);
 const isDrawerMode = computed(() => viewportWidth.value < 768);
 
-const accountName = computed(() => auth.user?.display_name || auth.user?.username || '未登录');
-const accountInitial = computed(() => String(accountName.value || '灵').trim().slice(0, 1).toUpperCase() || '灵');
-
 // 导航项配置
 const navItems = computed(() => {
   const items = [
     { key: 'workspace', label: '工作台', icon: Document, to: '/workspace' },
-    { key: 'community', label: '卡片社区', icon: Share, to: '/community' },
     {
       key: 'reference',
       label: '参考书',
@@ -244,7 +187,6 @@ function isActive(item) {
   if (item.to) {
     if (item.key === 'workspace') return route.path.startsWith('/workspace');
     if (item.key === 'settings') return route.path.startsWith('/settings');
-    if (item.key === 'community') return route.path.startsWith('/community');
   }
   return false;
 }
@@ -266,23 +208,6 @@ function onNavClick(item) {
 
 function setTheme(key) {
   theme.apply(key);
-}
-
-function handleAccountCommand(command) {
-  if (isDrawerMode.value) closeDrawer();
-  if (command === 'settings') {
-    router.push('/settings');
-    return;
-  }
-  if (command === 'logout') {
-    auth.logout();
-    ElMessage.success('已退出登录');
-  }
-}
-
-function openLogin() {
-  if (isDrawerMode.value) closeDrawer();
-  busEmit('lingshu:open-login');
 }
 
 function closeDrawer() {
@@ -356,13 +281,6 @@ function closeDrawer() {
   color: var(--text-regular);
   background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
   font: inherit;
-  cursor: pointer;
-}
-
-.account-chip:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--border-color));
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--color-primary) 8%, var(--bg-primary));
 }
 
 .sidenav--collapsed .account-chip {
@@ -391,18 +309,6 @@ function closeDrawer() {
   font-size: 13px;
   font-weight: 700;
   flex: 1;
-}
-
-.account-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--text-placeholder);
-  flex: 0 0 auto;
-}
-
-.account-dot.online {
-  background: #15b881;
 }
 
 .sidenav-nav {

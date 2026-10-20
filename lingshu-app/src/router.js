@@ -16,11 +16,6 @@ const routes = [
         component: () => import('./components/settings/SettingsView.vue'),
       },
       {
-        path: 'community',
-        name: 'community',
-        component: () => import('./components/community/CommunityView.vue'),
-      },
-      {
         path: 'workspace',
         name: 'workspace-entry',
         component: () => import('./components/workspace/WorkspaceLayout.vue'),

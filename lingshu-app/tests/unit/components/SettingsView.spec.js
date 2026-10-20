@@ -7,7 +7,6 @@ import SettingsView from '../../../src/components/settings/SettingsView.vue';
 
 // Stub child components
 const childStubs = {
-  AccountSettingsSection: { template: '<div class="stub-account-section">Account</div>' },
   GeneralSettingsSection: { template: '<div class="stub-general-section">General</div>' },
   AiSettingsSection: { template: '<div class="stub-ai-section">AI</div>' },
   ReferenceBooksView: { template: '<div class="stub-reference-view" />' },
@@ -84,9 +83,9 @@ describe('SettingsView', () => {
     expect(wrapper.find('.settings-search').exists()).toBe(true);
   });
 
-  it('defaults to account section when no section param', async () => {
+  it('defaults to general section when no section param', async () => {
     const { wrapper } = await createWrapper('/settings');
-    expect(wrapper.vm.activeSection).toBe('account');
+    expect(wrapper.vm.activeSection).toBe('general');
   });
 
   it('navigates to correct section from route params', async () => {
@@ -94,9 +93,17 @@ describe('SettingsView', () => {
     expect(wrapper.vm.activeSection).toBe('ai');
   });
 
-  it('shows account section by default', async () => {
+  it('shows general section by default', async () => {
     const { wrapper } = await createWrapper();
-    expect(wrapper.find('.stub-account-section').exists()).toBe(true);
+    expect(wrapper.find('.stub-general-section').exists()).toBe(true);
+  });
+
+  it('has no account section (本地模式无账号)', async () => {
+    const { wrapper } = await createWrapper();
+    const navItems = wrapper.findAll('.nav-item');
+    const labels = navItems.map((item) => item.text());
+    expect(labels).not.toContain('账号');
+    expect(wrapper.text()).not.toContain('退出登录');
   });
 
   it('shows AI section when activeSection is ai', async () => {

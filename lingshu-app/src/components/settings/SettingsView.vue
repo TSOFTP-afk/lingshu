@@ -10,7 +10,7 @@
         </div>
         <div class="profile-meta">
           <strong>{{ accountName }}</strong>
-          <span>{{ auth.isLoggedIn ? 'AI 已解锁' : 'AI 需登录' }}</span>
+          <span>本地创作模式</span>
         </div>
       </div>
 
@@ -60,12 +60,11 @@
           <el-icon><ArrowLeft /></el-icon>
           <span>返回工作台</span>
         </el-button>
-        <span class="settings-path">设置 / {{ activeItem?.label || '账号' }}</span>
+        <span class="settings-path">设置 / {{ activeItem?.label || '本机通用' }}</span>
       </div>
 
       <div class="settings-content">
-        <AccountSettingsSection v-if="activeSection === 'account'" />
-        <GeneralSettingsSection v-else-if="activeSection === 'general'" />
+        <GeneralSettingsSection v-if="activeSection === 'general'" />
         <AiSettingsSection v-else-if="activeSection === 'ai'" />
         <section
           v-else-if="activeSection === 'import'"
@@ -389,14 +388,12 @@ import {
   Search,
   Setting,
   Upload,
-  User,
 } from '@element-plus/icons-vue';
 import { useEventBus } from '../../composables/useEventBus';
 import { useAuthStore } from '../../stores/auth';
 import { useThemeStore } from '../../stores/theme';
 import { API_BASE_URL } from '../../utils/api';
 import api from '../../utils/api';
-import AccountSettingsSection from './AccountSettingsSection.vue';
 import AiSettingsSection from './AiSettingsSection.vue';
 import GeneralSettingsSection from './GeneralSettingsSection.vue';
 import ReferenceBooksView from '../dialogs/ReferenceBooksView.vue';
@@ -428,7 +425,6 @@ const navGroups = [
   {
     key: 'base',
     items: [
-      { key: 'account', label: '账号', icon: User, keywords: '账户 本地 登录 注册 云端 服务器 令牌' },
       { key: 'general', label: '本机通用', icon: Setting, keywords: '主题 字号 行高 布局 专注' },
     ],
   },
@@ -459,8 +455,8 @@ const navGroups = [
 
 const flatItems = navGroups.flatMap(group => group.items);
 const activeSection = computed(() => {
-  const section = String(route.params.section || 'account');
-  return flatItems.some(item => item.key === section) ? section : 'account';
+  const section = String(route.params.section || 'general');
+  return flatItems.some(item => item.key === section) ? section : 'general';
 });
 const activeItem = computed(() => flatItems.find(item => item.key === activeSection.value));
 const accountName = computed(() => auth.user?.display_name || auth.user?.username || '灵枢本地用户');
@@ -482,7 +478,7 @@ const visibleGroups = computed(() => {
 });
 
 function goSection(key) {
-  router.push(key === 'account' ? '/settings' : `/settings/${key}`);
+  router.push(key === 'general' ? '/settings' : `/settings/${key}`);
 }
 
 function jumpToFirstMatch() {
@@ -753,27 +749,6 @@ onMounted(loadSkills);
   overflow: hidden;
 }
 
-.account-summary {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 14px;
-  padding: 18px;
-  border-bottom: 1px solid var(--settings-border);
-}
-
-.account-summary h3 {
-  margin: 0;
-  color: var(--settings-text);
-  font-size: 17px;
-}
-
-.account-summary p {
-  margin: 5px 0 0;
-  color: var(--settings-muted);
-  font-size: 13px;
-}
-
 .setting-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -933,7 +908,6 @@ onMounted(loadSkills);
     padding: 0 14px;
   }
 
-  .account-summary,
   .setting-row {
     grid-template-columns: 1fr;
   }

@@ -131,6 +131,11 @@ describe('Router Configuration', () => {
     expect(router.currentRoute.value.path).toBe('/workspace');
   });
 
+  it('redirects removed community route to /workspace', async () => {
+    await router.push('/community');
+    expect(router.currentRoute.value.path).toBe('/workspace');
+  });
+
   it('redirects deeply nested unknown paths to /workspace', async () => {
     await router.push('/some/deeply/nested/unknown/path');
     expect(router.currentRoute.value.path).toBe('/workspace');

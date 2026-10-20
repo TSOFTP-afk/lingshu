@@ -76,11 +76,6 @@
             <el-icon v-else-if="data.kind === 'volume'"><Folder /></el-icon>
             <el-icon v-else><Document /></el-icon>
             <span class="tree-label">{{ data.title }}</span>
-            <el-icon
-              v-if="data.kind === 'book' && data.cloudBookId"
-              class="tree-cloud-icon"
-              title="已同步到云端"
-            ><Upload /></el-icon>
             <el-tag
               v-if="data.kind === 'chapter' && data.chapterType && data.chapterType !== '正文'"
               :type="chapterTagType(data.chapterType)"
@@ -139,24 +134,6 @@
           @click="handleContextAction('new-chapter')"
         >
           新建章节
-        </div>
-        <el-divider style="margin: 4px 0" />
-        <el-tooltip
-          v-if="!authStore.isLoggedIn"
-          content="请先登录"
-          placement="right"
-          :show-after="0"
-        >
-          <div class="context-item context-item--disabled">
-            上传到云端
-          </div>
-        </el-tooltip>
-        <div
-          v-else
-          class="context-item"
-          @click="handleContextAction('upload-cloud')"
-        >
-          {{ contextMenu.hasCloudBookId ? '同步到云端' : '上传到云端' }}
         </div>
         <el-divider style="margin: 4px 0" />
         <div
@@ -229,9 +206,6 @@ import {
   Notebook,
   Upload,
 } from '@element-plus/icons-vue';
-import { useAuthStore } from '../../stores/auth';
-
-const authStore = useAuthStore();
 
 const props = defineProps({
   books: { type: Array, default: () => [] },
@@ -248,7 +222,6 @@ const emit = defineEmits([
   'delete',
   'rename',
   'export-chapter',
-  'upload-cloud',
 ]);
 
 const treeRef = ref(null);
@@ -266,7 +239,6 @@ const treeData = computed(() =>
     nodeKey: `book-${b.id}`,
     title: b.title || '未命名',
     bookId: b.id,
-    cloudBookId: b.cloud_book_id || null,
     wordCount: b.word_count || 0,
     children: (b.volumes || []).map(v => ({
       kind: 'volume',
@@ -364,7 +336,6 @@ function onContextMenu(event, data) {
     nodeId: data.kind === 'book' ? data.bookId : data.kind === 'volume' ? data.volumeId : data.chapterId,
     bookId: data.bookId,
     isVirtual: Boolean(data.isVirtual),
-    hasCloudBookId: Boolean(data.cloudBookId),
   };
 }
 
@@ -406,11 +377,6 @@ function handleContextAction(action) {
         bookId: kind === 'book' ? nodeId : bookId,
         volumeId: kind === 'volume' && !isVirtual ? nodeId : null,
       });
-      break;
-    case 'upload-cloud':
-      if (kind === 'book' && nodeId && typeof nodeId === 'number' && nodeId > 0) {
-        emit('upload-cloud', nodeId);
-      }
       break;
     case 'rename':
       emit('rename', { kind, id: nodeId });
@@ -588,19 +554,4 @@ onUnmounted(() => document.removeEventListener('click', closeMenuOnClick));
   background: rgba(245, 108, 108, 0.08);
 }
 
-.context-item--disabled {
-  color: var(--text-placeholder);
-  cursor: not-allowed;
-}
-
-.context-item--disabled:hover {
-  background: transparent;
-}
-
-.tree-cloud-icon {
-  color: var(--color-primary);
-  font-size: 12px;
-  flex-shrink: 0;
-  opacity: 0.7;
-}
 </style>

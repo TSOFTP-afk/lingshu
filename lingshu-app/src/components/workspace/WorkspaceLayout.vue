@@ -22,7 +22,6 @@
           @create-chapter="onCreateChapter"
           @delete="onDeleteItem"
           @rename="onRenameItem"
-          @upload-cloud="onUploadToCloud"
         />
       </Pane>
 
@@ -162,7 +161,6 @@ import { useRoute, useRouter } from 'vue-router';
 import { useEventBus } from '../../composables/useEventBus';
 import { useBookStore } from '../../stores/book';
 import { useWorkspaceStore } from '../../stores/workspace';
-import { useCloudStore } from '../../stores/cloud';
 import { useAuthStore } from '../../stores/auth';
 import LibraryPanel from './LibraryPanel.vue';
 import ChapterTabBar from './ChapterTabBar.vue';
@@ -180,7 +178,6 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 
 const bookStore = useBookStore();
 const workspaceStore = useWorkspaceStore();
-const cloudStore = useCloudStore();
 const authStore = useAuthStore();
 const route = useRoute();
 const router = useRouter();
@@ -275,7 +272,6 @@ async function loadWorkspaceBooksForCurrentUser() {
   const user = await authStore.init();
   if (!authStore.isLoggedIn || !user) {
     clearWorkspaceView();
-    authStore.requireAuth();
     return;
   }
   try {
@@ -614,28 +610,6 @@ async function onRenameItem({ kind, id }) {
     if (bookStore.currentBook?.id) await bookStore.fetchBook(bookStore.currentBookId);
     ElMessage.success('已重命名');
   } catch { /* cancelled */ }
-}
-
-async function onUploadToCloud(bookId) {
-  if (!authStore.requireAuth()) return;
-  if (!bookId || typeof bookId !== 'number' || bookId <= 0) {
-    ElMessage.warning('无效的书籍');
-    return;
-  }
-  try {
-    await cloudStore.uploadBookToCloud(bookId);
-    await bookStore.fetchBooks();
-    if (bookStore.currentBookId && Number(bookStore.currentBookId) === Number(bookId)) {
-      await bookStore.fetchBook(bookId);
-    }
-    ElMessage.success('上传成功');
-  } catch {
-    ElMessage.error({
-      message: cloudStore.syncError || '上传失败',
-      duration: 5000,
-      showClose: true,
-    });
-  }
 }
 
 // ========== 章节保存 ==========

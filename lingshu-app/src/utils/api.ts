@@ -3,7 +3,6 @@ import axios, {
   type AxiosInstance,
   type InternalAxiosRequestConfig,
 } from 'axios';
-import { useEventBus } from '../composables/useEventBus';
 
 /**
  * Electron 桥接对象类型 —— 由主进程通过 preload 注入到 window.lingshu。
@@ -222,19 +221,12 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   return config;
 });
 
-// 响应拦截器：统一错误处理
+// 响应拦截器：401 时清理本地 token（登录界面已随多用户产品形态移除）
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     if (error.response?.status === 401) {
       _clearTokenStorage();
-      const url = String(error.config?.url || '');
-      const isAuthRequest = url.includes('/auth/login') || url.includes('/auth/register');
-      if (!isAuthRequest && typeof window !== 'undefined') {
-        const { emit } = useEventBus();
-        emit('lingshu:auth-expired');
-        emit('lingshu:open-login');
-      }
     }
     return Promise.reject(error);
   },
